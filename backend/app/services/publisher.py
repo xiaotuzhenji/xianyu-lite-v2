@@ -41,12 +41,14 @@ async def _get_browser():
                 "--no-sandbox", "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage", "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
             ],
         )
         return _playwright_browser
 
 class XianyuPublisher:
     SELLER_HOME = "https://seller.goofish.com"
+    GOOFISH_HOME = "https://www.goofish.com"
     PUBLISH_URL = "https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish"
 
     def __init__(self, cookies_str: str):
@@ -70,9 +72,13 @@ class XianyuPublisher:
         )
         await self.context.add_cookies(cookie_list)
         self.page = await self.context.new_page()
-        logger.info("[发布] 访问卖家首页...")
-        await self.page.goto(self.SELLER_HOME, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(5)
+        # Anti-detection: load stealth.js
+        stealth_file = str(Path(__file__).parent / 'stealth.js')
+        if Path(stealth_file).exists():
+            await self.page.add_init_script(path=stealth_file)
+        logger.info("[发布] 访问闲鱼首页建立会话...")
+        await self.page.goto(self.GOOFISH_HOME, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(3)
         logger.info("[发布] 进入发布页面...")
         await self.page.goto(self.PUBLISH_URL, wait_until="load", timeout=90000)
         await asyncio.sleep(8)
@@ -89,11 +95,11 @@ class XianyuPublisher:
 
     async def _check_login(self) -> bool:
         current_url = self.page.url
-        if "login" in current_url.lower():
+        if "login" in current_url.lower() or "no-permission" in current_url.lower():
             return False
         try:
             body_text = await self.page.evaluate("() => document.body.innerText")
-            if "立即登录" in body_text and "添加首图" not in body_text:
+            if any(w in body_text for w in ["立即登录", "非法访问", "当前账号没有访问权限"]):
                 return False
         except Exception:
             pass
