@@ -72,10 +72,10 @@ class XianyuPublisher:
         self.page = await self.context.new_page()
         logger.info("[发布] 访问卖家首页...")
         await self.page.goto(self.SELLER_HOME, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(2)
-        logger.info("[发布] 进入发布页面...")
-        await self.page.goto(self.PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(5)
+        logger.info("[发布] 进入发布页面...")
+        await self.page.goto(self.PUBLISH_URL, wait_until="load", timeout=90000)
+        await asyncio.sleep(8)
         return self
 
     async def __aexit__(self, *args):
@@ -99,7 +99,7 @@ class XianyuPublisher:
             pass
         return True
 
-    async def _wait_for_form(self, timeout: int = 30000) -> bool:
+    async def _wait_for_form(self, timeout: int = 60000) -> bool:
         try:
             await self.page.wait_for_selector("input, button, textarea, [class*='upload']", timeout=timeout)
             return True
