@@ -74,8 +74,8 @@ class XianyuPublisher:
         await self.page.goto(self.SELLER_HOME, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(2)
         logger.info("[发布] 进入发布页面...")
-        await self.page.goto(self.PUBLISH_URL, wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(3)
+        await self.page.goto(self.PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(5)
         return self
 
     async def __aexit__(self, *args):
@@ -290,9 +290,6 @@ async def publish_item(
     account = account_result.scalars().first()
     if not account or not account.cookie:
         return {"success": False, "message": "账号不存在或Cookie为空"}
-    if item.publish_status == "publishing":
-        return {"success": False, "message": "正在发布中，请稍候"}
-
     log = PublishLog(
         item_id=item_id,
         account_id=item.account_id,
