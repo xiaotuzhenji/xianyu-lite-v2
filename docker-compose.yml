@@ -1,0 +1,78 @@
+﻿
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: xianyu_lite
+      MYSQL_USER: xianyu
+      MYSQL_PASSWORD: xianyu123
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_uploads:/app/uploads
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=xianyu
+      - MYSQL_PASSWORD=xianyu123
+      - MYSQL_DATABASE=xianyu_lite
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      mysql:
+        condition: service_started
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  websocket:
+    build: ./websocket_service
+    ports:
+      - "8001:8001"
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - WEBSOCKET_URL=wss://wss-goofish.dingtalk.com/
+    depends_on:
+      - mysql
+      - redis
+    restart: unless-stopped
+
+  scheduler:
+    build: ./scheduler
+    environment:
+      - DATABASE_URL=mysql+aiomysql://xianyu:xianyu123@mysql:3306/xianyu_lite?charset=utf8mb4
+    depends_on:
+      - mysql
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  backend_uploads:
+
+

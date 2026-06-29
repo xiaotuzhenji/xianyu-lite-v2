@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+aiohttp==3.11.11
+websockets==14.1
+loguru==0.7.3
+python-dotenv==1.0.1
+
+sqlalchemy[asyncio]==2.0.36
+aiomysql==0.2.0
