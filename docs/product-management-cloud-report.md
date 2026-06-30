@@ -62,3 +62,9 @@
 - 已补充后端兜底校验：商品图片只接受 `http://`、`https://` 或 `/uploads/` 开头的地址，拒绝 `relative.jpg` 这类无效值。
 - 云端容器内复验通过：`test_item_rules.py`、`test_item_flow.py`、`test_publish_rules.py`、`test_delivery_rules.py`、`test_api_smoke.py`。
 - 云端 HTTP 复验通过：新建和更新时无效图片地址均返回 400，`/uploads/items/a.jpg` 和 `https://example.com/a.jpg` 可正常保存。
+
+## 2026-06-30 商品编辑文案复验
+
+- 云端代码已同步到 `a9211e8 fix: 优化商品编辑弹窗文案`。
+- 已修复编辑已上架或已下架商品时，弹窗标题仍显示“编辑商品草稿”的误导问题。
+- 云端已重建前端镜像，`npm run build` 通过，前端 HTTP 状态为 `200`，后端健康检查正常。
