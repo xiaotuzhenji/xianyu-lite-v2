@@ -102,6 +102,19 @@ def _normalize_publish_result(source_item_id: str, result: Dict[str, Any]) -> Di
     return result
 
 
+def _summarize_publish_page_text(text: str) -> str:
+    lines = []
+    for raw_line in (text or "").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        if any(keyword in line for keyword in ["失败", "错误", "异常", "必填", "请选择", "登录", "验证", "成功"]):
+            lines.append(line)
+        if len(lines) >= 3:
+            break
+    return "；".join(lines)[:180]
+
+
 async def _move_delivery_config(session: AsyncSession, account_id: str, old_item_id: str, new_item_id: str) -> None:
     if not old_item_id or not new_item_id or old_item_id == new_item_id:
         return
@@ -523,6 +536,8 @@ class XianyuPublisher:
             if "发布成功" in body_text or "上架成功" in body_text:
                 result["success"] = True
                 result["message"] = "发布成功"
+            elif not result.get("message"):
+                result["message"] = _summarize_publish_page_text(body_text)
         except Exception:
             pass
         current_url = self.page.url

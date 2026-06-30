@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.publisher import MAX_PUBLISH_IMAGES, _copy_item_for_republish, _extract_item_id_from_url, _image_count, _merge_item_for_publish, _normalize_publish_result, _parse_image_urls
+from app.services.publisher import MAX_PUBLISH_IMAGES, _copy_item_for_republish, _extract_item_id_from_url, _image_count, _merge_item_for_publish, _normalize_publish_result, _parse_image_urls, _summarize_publish_page_text
 
 
 class DummyItem:
@@ -59,6 +59,7 @@ def test_publish_rules():
     failed_result = _normalize_publish_result("draft-acc1-1", {"success": False, "message": ""})
     assert failed_result["success"] is False
     assert failed_result["message"]
+    assert _summarize_publish_page_text("标题不能为空\n请选择图片\n普通说明") == "标题不能为空；请选择图片"
 
     assert _extract_item_id_from_url("https://www.goofish.com/item/123456") == "123456"
     assert _extract_item_id_from_url("https://www.goofish.com/item?id=2233") == "2233"
