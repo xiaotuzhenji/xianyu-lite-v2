@@ -26,6 +26,37 @@ _playwright = None
 _playwright_browser = None
 _playwright_lock = asyncio.Lock()
 
+
+def _parse_image_urls(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if item]
+
+
+def _image_count(value: Optional[str]) -> int:
+    return len(_parse_image_urls(value))
+
+
+def _merge_item_for_publish(target: Item, source: Item) -> None:
+    if source.title and not target.title:
+        target.title = source.title
+    if source.description and not target.description:
+        target.description = source.description
+    if _image_count(source.image_urls) > _image_count(target.image_urls):
+        target.image_urls = source.image_urls
+    if source.price and not target.price:
+        target.price = source.price
+    if source.url:
+        target.url = source.url
+    target.publish_status = "published"
+    target.publish_error = None
+
 async def _get_browser():
     global _playwright, _playwright_browser
     if _playwright_browser and _playwright_browser.is_connected():
@@ -420,6 +451,17 @@ async def publish_item(
         log.result_url = result.get("item_url")
 
         if result["success"]:
+            result_item_id = str(result.get("item_id") or "").strip()
+            if result_item_id and result_item_id != item.item_id:
+                existing_stmt = select(Item).where(Item.item_id == result_item_id)
+                existing_result = await session.execute(existing_stmt)
+                existing_item = existing_result.scalar_one_or_none()
+                if existing_item and existing_item.id != item.id:
+                    _merge_item_for_publish(existing_item, item)
+                    await session.delete(item)
+                    item = existing_item
+                else:
+                    item.item_id = result_item_id
             item.publish_status = "published"
             item.publish_error = None
             if result.get("item_url"):

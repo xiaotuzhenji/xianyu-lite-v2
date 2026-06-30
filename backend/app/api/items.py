@@ -74,6 +74,10 @@ def _parse_image_urls(value: str) -> list[str]:
     return []
 
 
+def _image_count(value: Optional[str]) -> int:
+    return len(_parse_image_urls(value or "[]"))
+
+
 def _cleanup_uploaded_images(image_urls: str) -> None:
     for url in _parse_image_urls(image_urls):
         path = urlparse(url).path if "://" in url else url
@@ -107,6 +111,26 @@ async def _find_published_draft_item(
         .limit(1)
     )
     return (await db.execute(stmt)).scalar_one_or_none()
+
+
+def _merge_item_fields(target: Item, source: Item) -> None:
+    if source.title and not target.title:
+        target.title = source.title
+    if source.description and not target.description:
+        target.description = source.description
+    if (
+        source.image_urls
+        and source.image_urls != "[]"
+        and _image_count(source.image_urls) > _image_count(target.image_urls)
+    ):
+        target.image_urls = source.image_urls
+    if source.price and not target.price:
+        target.price = source.price
+    if source.publish_status == "published":
+        target.publish_status = "published"
+        target.publish_error = None
+    if source.url and (not target.url or "goofish.com/item/" in target.url):
+        target.url = source.url
 
 
 @router.post("/upload-image")
@@ -176,18 +200,26 @@ async def sync_items(
                 if not item_id:
                     continue
                 item = (await db.execute(select(Item).where(Item.item_id == item_id))).scalar_one_or_none()
-                if not item:
-                    item = await _find_published_draft_item(db, acc_id, item_id)
+                draft_item = await _find_published_draft_item(db, acc_id, item_id)
+                if item and draft_item and item.id != draft_item.id:
+                    _merge_item_fields(item, draft_item)
+                    await db.delete(draft_item)
+                elif not item and draft_item:
+                    item = draft_item
+                    item.item_id = item_id
+
                 if not item:
                     item = Item(item_id=item_id, account_id=acc_id)
                     db.add(item)
-                else:
+                elif item.item_id != item_id:
                     item.item_id = item_id
                 item.account_id = acc_id
                 item.title = (data.get("title") or "")[:30]
                 item.price = data.get("price") or 0
                 item.url = data.get("url") or f"https://www.goofish.com/item/{item_id}"
-                item.image_urls = data.get("image_urls") or "[]"
+                fetched_image_urls = data.get("image_urls") or "[]"
+                if _image_count(fetched_image_urls) >= _image_count(item.image_urls):
+                    item.image_urls = fetched_image_urls
                 item.status = data.get("status") or "online"
                 # If item is online on Xianyu, mark as already published
                 if item.status == "online" and item.publish_status in ("draft", "failed"):

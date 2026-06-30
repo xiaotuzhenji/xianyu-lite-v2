@@ -21,6 +21,16 @@ def _extract_image_urls(value: Any) -> list[str]:
         if not text or text in seen:
             return
         if text.startswith(("http://", "https://", "/")):
+            lower = text.lower()
+            if (
+                "tps-42-42" in lower
+                or "tps-84-60" in lower
+                or "tps-40-40" in lower
+                or "icon" in lower
+                or "avatar" in lower
+                or "default" in lower
+            ):
+                return
             seen.add(text)
             urls.append(text)
 
@@ -75,6 +85,13 @@ def _extract_image_urls(value: Any) -> list[str]:
                 "originalPicUrl",
             ):
                 push(node.get(key))
+            for key in (
+                "picInfo",
+                "picInfos",
+                "imageInfo",
+                "imageInfos",
+            ):
+                walk(node.get(key))
             for key in (
                 "picUrls",
                 "picUrlList",
