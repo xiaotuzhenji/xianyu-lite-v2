@@ -1,4 +1,4 @@
-FROM dockerproxy.com/library/python:3.11-slim
+FROM docker.m.daocloud.io/library/python:3.11-slim
 
 RUN printf 'deb https://mirrors.aliyun.com/debian/ trixie main contrib non-free non-free-firmware\n\
 deb https://mirrors.aliyun.com/debian/ trixie-updates main contrib non-free non-free-firmware\n\

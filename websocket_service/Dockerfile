@@ -1,4 +1,4 @@
-FROM dockerproxy.com/library/python:3.11-slim
+FROM docker.m.daocloud.io/library/python:3.11-slim
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 WORKDIR /app
 COPY requirements.txt .
