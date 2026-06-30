@@ -127,7 +127,8 @@ export default function Items() {
   };
 
   const handlePublish = async (item: any) => {
-    if (!window.confirm('确认发布该商品到闲鱼？')) return;
+    const confirmText = item.publish_status === 'published' ? '该商品已上架，确认按当前编辑内容再次发布到闲鱼吗？' : '确认发布该商品到闲鱼？';
+    if (!window.confirm(confirmText)) return;
     setPublishing(true);
     try {
       const r = await publishItem(item.item_id);
@@ -379,8 +380,8 @@ export default function Items() {
                         <button className="neu-button" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => openEdit(item)}>编辑</button>
                         <button className="neu-button" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => openDelivery(item)}>发货配置</button>
                        <button className="neu-button" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => removeItem(item)}>删除</button>
-                      {item.publish_status !== 'published' && item.publish_status !== 'publishing' && (
-                      <button className="neu-button" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => handlePublish(item)}>发布到闲鱼</button>
+                      {item.publish_status !== 'publishing' && (
+                      <button className="neu-button" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => handlePublish(item)}>{item.publish_status === 'published' ? '重新发布' : '发布到闲鱼'}</button>
                       )}
                      </div>
                      </td>
