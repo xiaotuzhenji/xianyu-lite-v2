@@ -49,7 +49,8 @@ async def _get_browser():
 class XianyuPublisher:
     SELLER_HOME = "https://seller.goofish.com"
     GOOFISH_HOME = "https://www.goofish.com"
-    PUBLISH_URL = "https://seller.goofish.com/?site=COMMONPRO#/seller-item/publish"
+    LOGIN_URL = "https://login.taobao.com/member/login.jhtml"
+    PUBLISH_URL = "https://www.goofish.com/publish?spm=a21ybx.item.sidebar.1.297e3da6aDZAmV"
 
     def __init__(self, cookies_str: str):
         self.cookies_str = cookies_str
@@ -62,10 +63,11 @@ class XianyuPublisher:
         cookies = trans_cookies(self.cookies_str)
         cookie_list = []
         for name, value in (cookies or {}).items():
-            cookie_list.append({
-                "name": name, "value": value,
-                "domain": ".goofish.com", "path": "/",
-            })
+            for domain in [".goofish.com", ".taobao.com", ".alipay.com"]:
+                cookie_list.append({
+                    "name": name, "value": value,
+                    "domain": domain, "path": "/",
+                })
         self.context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
@@ -79,6 +81,9 @@ class XianyuPublisher:
         logger.info("[发布] 访问闲鱼首页建立会话...")
         await self.page.goto(self.GOOFISH_HOME, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(3)
+        logger.info("[发布] 访问登录页同步登录态...")
+        await self.page.goto(self.LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2)
         logger.info("[发布] 进入发布页面...")
         await self.page.goto(self.PUBLISH_URL, wait_until="load", timeout=90000)
         await asyncio.sleep(8)
@@ -95,11 +100,11 @@ class XianyuPublisher:
 
     async def _check_login(self) -> bool:
         current_url = self.page.url
-        if "login" in current_url.lower() or "no-permission" in current_url.lower():
+        if "login" in current_url.lower() or "auth" in current_url.lower() or "no-permission" in current_url.lower():
             return False
         try:
             body_text = await self.page.evaluate("() => document.body.innerText")
-            if any(w in body_text for w in ["立即登录", "非法访问", "当前账号没有访问权限"]):
+            if any(w in body_text for w in ["立即登录", "非法访问", "当前账号没有访问权限", "登录后可以"]):
                 return False
         except Exception:
             pass
