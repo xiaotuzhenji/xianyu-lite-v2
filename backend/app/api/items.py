@@ -359,16 +359,10 @@ async def create_item(
         raise HTTPException(status_code=400, detail="account_id 不能为空")
     if not await _get_owned_account(db, account_id, user):
         raise HTTPException(status_code=404, detail="账号不存在或无权限")
-    item_id = data.item_id.strip()
-    if item_id:
-        existing = (await db.execute(select(Item).where(Item.item_id == item_id))).scalar_one_or_none()
-        if existing:
-            raise HTTPException(status_code=409, detail="商品ID已存在")
-    else:
-        existing = None
+    if data.item_id.strip():
+        raise HTTPException(status_code=400, detail="\u65b0\u5efa\u5546\u54c1\u4e0d\u80fd\u6307\u5b9a\u5546\u54c1ID\uff0c\u8bf7\u53d1\u5e03\u6210\u529f\u540e\u7531\u5e73\u53f0\u81ea\u52a8\u56de\u5199")
 
-    is_draft = not item_id
-    item = existing or Item(item_id=item_id or _new_draft_item_id(account_id), account_id=account_id)
+    item = Item(item_id=_new_draft_item_id(account_id), account_id=account_id)
     item.account_id = account_id
     item.title = data.title.strip()[:30]
     _validate_price(data.price or 0)

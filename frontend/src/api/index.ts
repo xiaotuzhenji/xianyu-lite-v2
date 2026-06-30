@@ -52,7 +52,7 @@ export const deleteAccount = async (accountId: string) => {
 
 export const getItems = async (accountId?: string) => {
   const token = localStorage.getItem('token');
-  const params = accountId ? `?account_id=${accountId}` : '?page_size=100';
+  const params = accountId ? `?account_id=${accountId}&page_size=100` : '?page_size=100';
   const res = await fetch(`${API_BASE}/api/v1/items${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });

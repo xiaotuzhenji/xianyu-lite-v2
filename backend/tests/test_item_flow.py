@@ -4,15 +4,18 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.items import (
+    ItemCreateRequest,
     _can_delete_item,
     _cleanup_uploaded_images,
     _delete_delivery_config,
     _get_owned_item,
     _move_delivery_config,
+    create_item,
 )
 from app.database import Base
 from app.models.account import Account
@@ -46,6 +49,12 @@ async def _run_item_flow():
         assert await _get_owned_item(session, "1001", user_a) is not None
         assert await _get_owned_item(session, "2001", user_a) is None
         assert await _get_owned_item(session, "2001", user_b) is not None
+        try:
+            await create_item(ItemCreateRequest(account_id="acc1", item_id="1003", title="manual id"), session, user_a)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError("expected create item with manual item_id to fail")
         _cleanup_uploaded_images('["/uploads/items/a.jpg","/tmp/b.jpg"]')
         config = DeliveryConfig(account_id="acc1", item_id="draft-acc1-1", delivery_content="delivery content")
         session.add(config)
