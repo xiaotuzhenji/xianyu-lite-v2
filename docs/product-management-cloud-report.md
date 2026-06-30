@@ -55,3 +55,10 @@
 - 已补充后端兜底校验：新建和更新商品时，标题不能为空，`image_urls` 必须是 JSON 数组，且最多 8 张。
 - 云端容器内复验通过：`test_item_rules.py`、`test_item_flow.py`、`test_publish_rules.py`、`test_delivery_rules.py`、`test_api_smoke.py`。
 - 云端 HTTP 边界复验通过：空标题、非 JSON 图片字段、非数组图片字段均返回 400，正常 JSON 数组可保存，未出现 500。
+
+## 2026-06-30 商品图片地址复验
+
+- 云端代码已同步到 `03df96a fix: 校验商品图片地址格式`。
+- 已补充后端兜底校验：商品图片只接受 `http://`、`https://` 或 `/uploads/` 开头的地址，拒绝 `relative.jpg` 这类无效值。
+- 云端容器内复验通过：`test_item_rules.py`、`test_item_flow.py`、`test_publish_rules.py`、`test_delivery_rules.py`、`test_api_smoke.py`。
+- 云端 HTTP 复验通过：新建和更新时无效图片地址均返回 400，`/uploads/items/a.jpg` 和 `https://example.com/a.jpg` 可正常保存。
