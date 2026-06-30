@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -294,9 +295,14 @@ class XianyuPublisher:
         except Exception:
             pass
         current_url = self.page.url
-        if "item_id=" in current_url or "/item/" in current_url:
+        if "item_id=" in current_url or "/item/" in current_url or "item?id=" in current_url:
             result["success"] = True
             result["item_url"] = current_url
+            item_id_match = re.search(r"[?&]id=(\d+)", current_url) or re.search(r"item_id=(\d+)", current_url)
+            if item_id_match:
+                result["item_id"] = item_id_match.group(1)
+            if not result.get("message"):
+                result["message"] = "发布成功"
         return result
 
     async def publish(self, item_data: dict) -> dict:
