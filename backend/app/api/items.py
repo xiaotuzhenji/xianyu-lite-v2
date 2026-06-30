@@ -200,6 +200,14 @@ async def sync_items(
                 if not item_id:
                     continue
                 item = (await db.execute(select(Item).where(Item.item_id == item_id))).scalar_one_or_none()
+                if (
+                    item
+                    and item.status == "online"
+                    and (not item.publish_status or item.publish_status == "draft")
+                    and not item.item_id.startswith("draft-")
+                ):
+                    item.publish_status = "published"
+                    item.publish_error = None
                 draft_item = await _find_published_draft_item(db, acc_id, item_id)
                 if item and draft_item and item.id != draft_item.id:
                     _merge_item_fields(item, draft_item)
@@ -209,7 +217,7 @@ async def sync_items(
                     item.item_id = item_id
 
                 if not item:
-                    item = Item(item_id=item_id, account_id=acc_id)
+                    item = Item(item_id=item_id, account_id=acc_id, publish_status="draft")
                     db.add(item)
                 elif item.item_id != item_id:
                     item.item_id = item_id
@@ -222,7 +230,7 @@ async def sync_items(
                     item.image_urls = fetched_image_urls
                 item.status = data.get("status") or "online"
                 # If item is online on Xianyu, mark as already published
-                if item.status == "online" and item.publish_status in ("draft", "failed"):
+                if item.status == "online" and (not item.publish_status or item.publish_status in ("draft", "failed")):
                     item.publish_status = "published"
                     item.publish_error = None
                 synced += 1
