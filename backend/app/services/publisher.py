@@ -12,7 +12,9 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
+import aiohttp
 from loguru import logger
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.account import Account
 from ..models.item import Item
 from ..models.publish_log import PublishLog
-from ..utils.cookie_utils import is_token_error, trans_cookies
+from ..utils.cookie_utils import is_token_error, merge_set_cookies, trans_cookies
+from ..utils.crypto import generate_sign
 
 _playwright = None
 _playwright_browser = None
@@ -56,6 +59,102 @@ def _merge_item_for_publish(target: Item, source: Item) -> None:
         target.url = source.url
     target.publish_status = "published"
     target.publish_error = None
+
+
+def _guess_image_suffix(url: str, content_type: str) -> str:
+    path = urlparse(url).path
+    suffix = Path(path).suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}:
+        return ".jpg" if suffix == ".jpeg" else suffix
+    mapping = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+    }
+    return mapping.get((content_type or "").lower(), ".jpg")
+
+
+async def _download_remote_publish_image(url: str) -> Path:
+    timeout = aiohttp.ClientTimeout(total=60)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Referer": "https://www.goofish.com/",
+    }
+    last_error: Optional[Exception] = None
+    for extra_headers in ({}, headers):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=extra_headers) as session:
+                async with session.get(url, allow_redirects=True) as resp:
+                    if resp.status != 200:
+                        raise ValueError(f"status={resp.status}")
+                    image_data = await resp.read()
+                    if not image_data:
+                        raise ValueError("empty body")
+                    content_type = (resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+                    suffix = _guess_image_suffix(str(resp.url), content_type)
+                    tmp = Path(f"/tmp/publish_{int(time.time() * 1000)}_{abs(hash(url)) % 100000}{suffix}")
+                    tmp.write_bytes(image_data)
+                    return tmp
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"远程图片下载失败: {url}, error={last_error}")
+
+
+async def _offline_item(account_id: str, cookies_str: str, item_id: str) -> bool:
+    if not account_id or not cookies_str or not item_id:
+        return False
+    cookies = trans_cookies(cookies_str)
+    timestamp = str(int(time.time() * 1000))
+    data_val = json.dumps({"itemIds": item_id}, separators=(",", ":"))
+    token = cookies.get("_m_h5_tk", "").split("_")[0] if cookies.get("_m_h5_tk") else ""
+    sign = generate_sign(timestamp, token, data_val)
+    params = {
+        "jsv": "2.7.2",
+        "appKey": "34839810",
+        "t": timestamp,
+        "sign": sign,
+        "v": "1.0",
+        "type": "originaljson",
+        "accountSite": "xianyu",
+        "dataType": "json",
+        "timeout": "20000",
+        "needLoginPC": "true",
+        "showErrorToast": "true",
+        "api": "mtop.alibaba.idle.seller.pc.item.batch.offline",
+        "sessionOption": "AutoLoginOnly",
+        "spm_cnt": "a21107h.42826273.0.0",
+    }
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/x-www-form-urlencoded",
+        "referer": "https://seller.goofish.com/?site=COMMONPRO",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
+        "cookie": cookies_str.replace("\n", "").replace("\r", ""),
+    }
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            "https://h5api.m.goofish.com/h5/mtop.alibaba.idle.seller.pc.item.batch.offline/1.0/",
+            params=params,
+            data={"data": data_val},
+            headers=headers,
+        ) as response:
+            res_json = await response.json(content_type=None)
+            changed, _ = merge_set_cookies(cookies_str, response.headers.getall("set-cookie", []))
+            if changed:
+                logger.info(f"[下架] Cookie 已刷新: {account_id}")
+            ret = (res_json.get("ret") or [""])[0]
+            if "SUCCESS" not in ret:
+                logger.warning(f"[下架] 接口失败: item={item_id}, ret={ret}")
+                return False
+            inner = ((res_json.get("data") or {}).get("data") or {})
+            results = inner.get("itemProcessResultList") or []
+            return any(str(item.get("itemId") or "") == item_id and bool(item.get("success")) for item in results) or bool(inner.get("sucCount"))
 
 async def _get_browser():
     global _playwright, _playwright_browser
@@ -250,8 +349,6 @@ class XianyuPublisher:
         raise Exception("未找到描述输入框")
 
     async def _upload_images(self, urls: list[str]) -> int:
-        import aiohttp
-
         upload_input = await self.page.query_selector('input[type="file"]')
         if not upload_input:
             logger.warning("未找到文件上传input")
@@ -263,11 +360,9 @@ class XianyuPublisher:
             for index, url in enumerate(urls[:10]):
                 try:
                     if url.startswith("http://") or url.startswith("https://"):
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(url, timeout=30) as resp:
-                                if resp.status != 200:
-                                    continue
-                                image_data = await resp.read()
+                        tmp = await _download_remote_publish_image(url)
+                        tmp_files.append(tmp)
+                        continue
                     elif url.startswith("/uploads/"):
                         local_path = Path("/app") / url.lstrip("/")
                         if not local_path.exists():
@@ -451,6 +546,7 @@ async def publish_item(
         log.result_url = result.get("item_url")
 
         if result["success"]:
+            previous_item_id = item.item_id
             result_item_id = str(result.get("item_id") or "").strip()
             if result_item_id and result_item_id != item.item_id:
                 existing_stmt = select(Item).where(Item.item_id == result_item_id)
@@ -466,6 +562,15 @@ async def publish_item(
             item.publish_error = None
             if result.get("item_url"):
                 item.url = result["item_url"]
+            if previous_item_id and result_item_id and previous_item_id != result_item_id:
+                try:
+                    offline_ok = await _offline_item(item.account_id, cookies_str, previous_item_id)
+                    if offline_ok:
+                        logger.info(f"[下架] 旧商品已下架: {previous_item_id}")
+                    else:
+                        logger.warning(f"[下架] 旧商品下架失败: {previous_item_id}")
+                except Exception as exc:
+                    logger.warning(f"[下架] 旧商品下架异常: {previous_item_id}, error={exc}")
         else:
             item.publish_status = "failed"
             item.publish_error = result.get("message")
