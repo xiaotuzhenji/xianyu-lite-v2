@@ -3,6 +3,26 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+pull_with_retry() {
+  image="$1"
+  attempt=1
+  while [ "$attempt" -le 5 ]; do
+    if docker pull "$image"; then
+      return 0
+    fi
+    echo "拉取 $image 失败，5 秒后重试：$attempt/5"
+    sleep 5
+    attempt=$((attempt + 1))
+  done
+  echo "拉取 $image 失败"
+  return 1
+}
+
+echo "== 商品管理云端验证：预拉基础镜像 =="
+pull_with_retry docker.m.daocloud.io/library/python:3.11-slim
+pull_with_retry docker.m.daocloud.io/library/node:20-alpine
+pull_with_retry docker.m.daocloud.io/library/nginx:alpine
+
 echo "== 商品管理云端验证：构建后端测试镜像 =="
 docker compose build backend
 
