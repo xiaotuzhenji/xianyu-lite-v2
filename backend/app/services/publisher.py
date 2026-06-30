@@ -112,7 +112,10 @@ class XianyuPublisher:
 
     async def _wait_for_form(self, timeout: int = 60000) -> bool:
         try:
-            await self.page.wait_for_selector("input, button, textarea, [class*='upload']", timeout=timeout)
+            await self.page.wait_for_selector(
+                "input, button, textarea, [contenteditable='true'], [class*='upload']",
+                timeout=timeout,
+            )
             return True
         except Exception:
             return False
@@ -140,18 +143,79 @@ class XianyuPublisher:
         return False
 
     async def _fill_title(self, title: str):
-        if not await self._fill_text_field(["标题", "宝贝标题", "商品标题"], title):
-            raise Exception("未找到标题输入框")
+        if await self._fill_text_field(["标题", "宝贝标题", "商品标题"], title):
+            return
+        logger.info("未找到独立标题输入框，改为写入宝贝描述编辑器")
+
+    async def _fill_contenteditable(self, selectors: list[str], value: str) -> bool:
+        for selector in selectors:
+            try:
+                candidates = await self.page.query_selector_all(selector)
+            except Exception:
+                continue
+            for candidate in candidates:
+                try:
+                    if not await candidate.is_visible():
+                        continue
+                    await candidate.click()
+                    await asyncio.sleep(0.2)
+                    await candidate.evaluate(
+                        """(el, text) => {
+                            el.focus();
+                            el.innerText = text;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                            el.dispatchEvent(new Event('blur', { bubbles: true }));
+                        }""",
+                        value,
+                    )
+                    logger.info(f"✓ [富文本]: {value[:30]}")
+                    return True
+                except Exception:
+                    continue
+        return False
 
     async def _fill_price(self, price: float):
-        if not await self._fill_text_field(["价格", "售价", "转让价"], str(price)):
-            raise Exception("未找到价格输入框")
+        if await self._fill_text_field(["价格", "售价", "转让价"], str(price)):
+            return
+        try:
+            inputs = await self.page.query_selector_all('input[type="text"][placeholder="0.00"]')
+            for price_input in inputs:
+                try:
+                    if not await price_input.is_visible() or not await price_input.is_enabled():
+                        continue
+                    await price_input.click()
+                    await asyncio.sleep(0.2)
+                    await price_input.fill("")
+                    await price_input.fill(str(price))
+                    logger.info(f"✓ [价格]: {price}")
+                    return
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        raise Exception("未找到价格输入框")
 
     async def _fill_stock(self, stock: int = 999):
         await self._fill_text_field(["库存", "数量"], str(stock))
 
-    async def _fill_description(self, desc: str):
-        await self._fill_text_field(["描述", "宝贝描述", "商品描述"], desc)
+    async def _fill_description(self, title: str, desc: str):
+        content = title if not desc else f"{title}\n\n{desc}" if title else desc
+        if not content:
+            return
+        if await self._fill_text_field(["描述", "宝贝描述", "商品描述"], content):
+            return
+        if await self._fill_contenteditable(
+            [
+                'div[data-placeholder*="描述"]',
+                'div[contenteditable="true"]',
+                '[class*="editor"][contenteditable="true"]',
+                '[role="textbox"][contenteditable="true"]',
+            ],
+            content,
+        ):
+            return
+        raise Exception("未找到描述输入框")
 
     async def _upload_images(self, urls: list[str]) -> int:
         import aiohttp, tempfile
@@ -253,8 +317,7 @@ class XianyuPublisher:
             await self._fill_title(title)
             await self._fill_price(price)
             await self._fill_stock(stock)
-            if desc:
-                await self._fill_description(desc)
+            await self._fill_description(title, desc)
             if images:
                 uploaded = await self._upload_images(images)
                 logger.info(f"图片: {uploaded} 张")
