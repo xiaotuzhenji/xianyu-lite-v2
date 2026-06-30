@@ -29,6 +29,13 @@ class AccountUpdate(BaseModel):
     auto_confirm: Optional[bool] = None
     cookie: Optional[str] = None
 
+
+async def _get_owned_account(db: AsyncSession, account_id: str, user: User) -> Optional[Account]:
+    result = await db.execute(
+        select(Account).where(Account.account_id == account_id, Account.owner_id == user.id)
+    )
+    return result.scalar_one_or_none()
+
 @router.get("")
 async def list_accounts(
     page: int = Query(1, ge=1),
@@ -37,11 +44,17 @@ async def list_accounts(
     user: User = Depends(get_current_user),
 ):
     offset = (page - 1) * page_size
-    total_q = select(func.count(Account.id))
+    total_q = select(func.count(Account.id)).where(Account.owner_id == user.id)
     total_r = await db.execute(total_q)
     total = total_r.scalar()
 
-    query = select(Account).order_by(Account.id.desc()).offset(offset).limit(page_size)
+    query = (
+        select(Account)
+        .where(Account.owner_id == user.id)
+        .order_by(Account.id.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
     result = await db.execute(query)
     accounts = result.scalars().all()
 
@@ -55,16 +68,14 @@ async def list_accounts(
 
 @router.get("/{account_id}")
 async def get_account(account_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    result = await db.execute(select(Account).where(Account.account_id == account_id))
-    account = result.scalar_one_or_none()
+    account = await _get_owned_account(db, account_id, user)
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在")
     return {"success": True, "data": AccountResponse.model_validate(account)}
 
 @router.put("/{account_id}")
 async def update_account(account_id: str, data: AccountUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    result = await db.execute(select(Account).where(Account.account_id == account_id))
-    account = result.scalar_one_or_none()
+    account = await _get_owned_account(db, account_id, user)
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在")
     if data.remark is not None:
@@ -90,6 +101,8 @@ async def create_account(data: AccountUpdate, db: AsyncSession = Depends(get_db)
     result = await db.execute(select(Account).where(Account.account_id == account_id))
     existing = result.scalar_one_or_none()
     if existing:
+        if existing.owner_id != user.id:
+            raise HTTPException(status_code=409, detail="账号已被其他用户绑定")
         # 更新cookie
         existing.cookie = data.cookie
         existing.remark = data.remark or existing.remark
@@ -102,8 +115,7 @@ async def create_account(data: AccountUpdate, db: AsyncSession = Depends(get_db)
 
 @router.delete("/{account_id}")
 async def delete_account(account_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    result = await db.execute(select(Account).where(Account.account_id == account_id))
-    account = result.scalar_one_or_none()
+    account = await _get_owned_account(db, account_id, user)
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在")
     await db.delete(account)
