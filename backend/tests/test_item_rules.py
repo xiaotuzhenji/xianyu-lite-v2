@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi import HTTPException
 
-from app.api.items import ItemCreateRequest, ItemUpdateRequest, _can_delete_item, _image_count, _is_item_account_conflict, _new_draft_item_id, _parse_image_urls, _uploaded_image_paths, _validate_image_count, _validate_price
+from app.api.items import ItemCreateRequest, ItemUpdateRequest, _can_delete_item, _image_count, _is_item_account_conflict, _new_draft_item_id, _normalize_image_urls, _parse_image_urls, _uploaded_image_paths, _validate_image_count, _validate_price, _validate_title
 
 
 class DummyItem:
@@ -17,6 +17,20 @@ class DummyItem:
 
 def test_item_rules():
     assert _parse_image_urls('["/uploads/items/a.jpg","https://x/y.png"]') == ["/uploads/items/a.jpg", "https://x/y.png"]
+    assert _normalize_image_urls('["/uploads/items/a.jpg"]') == '["/uploads/items/a.jpg"]'
+    assert _validate_title("  abc  ") == "abc"
+    try:
+        _normalize_image_urls("not-json")
+    except HTTPException as exc:
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("expected invalid image json to fail")
+    try:
+        _validate_title("   ")
+    except HTTPException as exc:
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("expected empty title to fail")
     assert _image_count('["a","b","c"]') == 3
     assert _can_delete_item(DummyItem("draft-1", "online")) is True
     assert _can_delete_item(DummyItem("10001", "online")) is False

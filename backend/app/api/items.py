@@ -60,16 +60,34 @@ class ItemUpdateRequest(BaseModel):
     image_urls: Optional[str] = None
 
 
-def _parse_image_urls(value: str) -> list[str]:
+def _parse_image_urls(value: str, *, strict: bool = False) -> list[str]:
     if not value:
         return []
     try:
         parsed = json.loads(value)
-        if isinstance(parsed, list):
-            return [str(item) for item in parsed if item]
     except Exception:
+        if strict:
+            raise HTTPException(status_code=400, detail="\u56fe\u7247\u5730\u5740\u5fc5\u987b\u662f JSON \u6570\u7ec4")
         return []
-    return []
+    if not isinstance(parsed, list):
+        if strict:
+            raise HTTPException(status_code=400, detail="\u56fe\u7247\u5730\u5740\u5fc5\u987b\u662f JSON \u6570\u7ec4")
+        return []
+    return [str(item) for item in parsed if item]
+
+
+def _validate_title(title: str) -> str:
+    clean_title = title.strip()
+    if not clean_title:
+        raise HTTPException(status_code=400, detail="\u5546\u54c1\u6807\u9898\u4e0d\u80fd\u4e3a\u7a7a")
+    return clean_title[:30]
+
+
+def _normalize_image_urls(value: str) -> str:
+    urls = _parse_image_urls(value or "[]", strict=True)
+    if len(urls) > MAX_ITEM_IMAGES:
+        raise HTTPException(status_code=400, detail=f"\u5546\u54c1\u56fe\u7247\u6700\u591a {MAX_ITEM_IMAGES} \u5f20")
+    return json.dumps(urls, ensure_ascii=False)
 
 
 def _image_count(value: Optional[str]) -> int:
@@ -78,12 +96,12 @@ def _image_count(value: Optional[str]) -> int:
 
 def _validate_image_count(image_urls: str) -> None:
     if _image_count(image_urls) > MAX_ITEM_IMAGES:
-        raise HTTPException(status_code=400, detail=f"商品图片最多 {MAX_ITEM_IMAGES} 张")
+        raise HTTPException(status_code=400, detail=f"\u5546\u54c1\u56fe\u7247\u6700\u591a {MAX_ITEM_IMAGES} \u5f20")
 
 
 def _validate_price(price: float) -> None:
     if price < 0:
-        raise HTTPException(status_code=400, detail="商品价格不能为负数")
+        raise HTTPException(status_code=400, detail="\u5546\u54c1\u4ef7\u683c\u4e0d\u80fd\u4e3a\u8d1f\u6570")
 
 
 def _uploaded_image_path(url: str) -> str:
@@ -364,13 +382,12 @@ async def create_item(
 
     item = Item(item_id=_new_draft_item_id(account_id), account_id=account_id)
     item.account_id = account_id
-    item.title = data.title.strip()[:30]
+    item.title = _validate_title(data.title)
     _validate_price(data.price or 0)
     item.price = data.price or 0
     item.url = data.url.strip()
     item.description = (data.description or "").strip()
-    _validate_image_count(data.image_urls or "[]")
-    item.image_urls = (data.image_urls or "[]").strip()
+    item.image_urls = _normalize_image_urls(data.image_urls or "[]")
     item.status = "draft"
     db.add(item)
     await db.commit()
@@ -389,7 +406,7 @@ async def update_item(
     if not item:
         raise HTTPException(status_code=404, detail="商品不存在")
     if data.title is not None:
-        item.title = data.title.strip()[:30]
+        item.title = _validate_title(data.title)
     if data.price is not None:
         _validate_price(data.price)
         item.price = data.price
@@ -398,8 +415,7 @@ async def update_item(
     if data.description is not None:
         item.description = data.description.strip()
     if data.image_urls is not None:
-        _validate_image_count(data.image_urls)
-        item.image_urls = data.image_urls.strip() or "[]"
+        item.image_urls = _normalize_image_urls(data.image_urls)
     await db.commit()
     await db.refresh(item)
     return {"success": True, "data": ItemResponse.model_validate(item)}
