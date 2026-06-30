@@ -23,6 +23,8 @@ const emptyForm = {
   url: '',
   description: '',
   image_urls: '[]',
+  status: 'draft',
+  publish_status: 'draft',
 };
 
 function parseImageUrls(value: string) {
@@ -78,6 +80,13 @@ function parseImageUrls(value: string) {
   }
 
   return urls;
+}
+
+function getItemEditTitle(item: any) {
+  if (!item?.item_id) return '新建商品草稿';
+  if (item.publish_status === 'published') return '编辑已上架商品';
+  if (item.status === 'offline') return '编辑已下架商品';
+  return '编辑商品草稿';
 }
 
 export default function Items() {
@@ -237,6 +246,8 @@ export default function Items() {
       url: item.url || '',
       description: item.description || '',
       image_urls: item.image_urls || '[]',
+      status: item.status || 'draft',
+      publish_status: item.publish_status || 'draft',
     });
     setItemModalOpen(true);
   };
@@ -478,7 +489,7 @@ export default function Items() {
         <div className="modal-overlay" onClick={closeItemModal}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
-              {itemForm.item_id ? '编辑商品草稿' : '新建商品草稿'}
+              {getItemEditTitle(itemForm)}
             </h3>
             <div style={{ display: 'grid', gap: 10 }}>
               <select className="neu-input" value={itemForm.account_id} onChange={(e) => setItemForm({ ...itemForm, account_id: e.target.value })}>
