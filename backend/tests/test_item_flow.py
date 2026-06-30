@@ -67,6 +67,12 @@ async def _run_item_flow():
             assert exc.status_code == 400
         else:
             raise AssertionError("expected create item with invalid image_urls to fail")
+        try:
+            await create_item(ItemCreateRequest(account_id="acc1", title="valid title", image_urls='["relative.jpg"]'), session, user_a)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError("expected create item with invalid image url to fail")
         _cleanup_uploaded_images('["/uploads/items/a.jpg","/tmp/b.jpg"]')
         config = DeliveryConfig(account_id="acc1", item_id="draft-acc1-1", delivery_content="delivery content")
         session.add(config)

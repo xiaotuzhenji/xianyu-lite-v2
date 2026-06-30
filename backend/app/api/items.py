@@ -87,6 +87,9 @@ def _normalize_image_urls(value: str) -> str:
     urls = _parse_image_urls(value or "[]", strict=True)
     if len(urls) > MAX_ITEM_IMAGES:
         raise HTTPException(status_code=400, detail=f"\u5546\u54c1\u56fe\u7247\u6700\u591a {MAX_ITEM_IMAGES} \u5f20")
+    for url in urls:
+        if not (url.startswith("http://") or url.startswith("https://") or url.startswith("/uploads/")):
+            raise HTTPException(status_code=400, detail="\u56fe\u7247\u5730\u5740\u683c\u5f0f\u4e0d\u6b63\u786e")
     return json.dumps(urls, ensure_ascii=False)
 
 

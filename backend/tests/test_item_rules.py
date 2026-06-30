@@ -26,6 +26,12 @@ def test_item_rules():
     else:
         raise AssertionError("expected invalid image json to fail")
     try:
+        _normalize_image_urls('["relative.jpg"]')
+    except HTTPException as exc:
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("expected invalid image url to fail")
+    try:
         _validate_title("   ")
     except HTTPException as exc:
         assert exc.status_code == 400
