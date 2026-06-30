@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -17,7 +18,7 @@ class AccountResponse(BaseModel):
     remark: str = ""
     status: str = "active"
     auto_confirm: bool = True
-    last_active_at: Optional[str] = None
+    last_active_at: Optional[datetime] = None
     keyword_count: int = 0
 
     class Config:

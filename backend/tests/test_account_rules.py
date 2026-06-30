@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from pathlib import Path
 import sys
 
@@ -6,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.accounts import _get_owned_account
+from app.api.accounts import AccountResponse, _get_owned_account
 from app.database import Base
 from app.models.account import Account
 from app.models.user import User
@@ -36,3 +37,15 @@ async def _run_account_rules():
 
 def test_account_rules():
     asyncio.run(_run_account_rules())
+
+
+def test_account_response_accepts_datetime():
+    account = Account(
+        id=1,
+        account_id="acc1",
+        owner_id=1,
+        status="active",
+        last_active_at=datetime(2026, 6, 30, 12, 0, 0),
+    )
+    data = AccountResponse.model_validate(account)
+    assert data.last_active_at is not None
