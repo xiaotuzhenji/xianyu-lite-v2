@@ -1,0 +1,67 @@
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.services.publisher import MAX_PUBLISH_IMAGES, _copy_item_for_republish, _extract_item_id_from_url, _image_count, _merge_item_for_publish, _normalize_publish_result, _parse_image_urls
+
+
+class DummyItem:
+    def __init__(self, item_id="", account_id="", title="", description="", image_urls="[]", price=0, status="draft", publish_status="draft", publish_error="err", url=""):
+        self.item_id = item_id
+        self.account_id = account_id
+        self.title = title
+        self.description = description
+        self.image_urls = image_urls
+        self.price = price
+        self.status = status
+        self.publish_status = publish_status
+        self.publish_error = publish_error
+        self.url = url
+
+
+def test_publish_rules():
+    assert MAX_PUBLISH_IMAGES == 8
+    assert _parse_image_urls('["a","b"]') == ["a", "b"]
+    assert _image_count('["a","b"]') == 2
+
+    target = DummyItem(title="", description="", image_urls='["a"]', price=0, url="", publish_status="draft", publish_error="x")
+    source = DummyItem(title="标题", description="描述", image_urls='["a","b"]', price=12.5, url="http://x")
+    _merge_item_for_publish(target, source)
+    assert target.title == "标题"
+    assert target.description == "描述"
+    assert target.image_urls == '["a","b"]'
+    assert target.price == 12.5
+    assert target.url == "http://x"
+    assert target.publish_status == "published"
+    assert target.publish_error is None
+
+    republish_target = DummyItem()
+    republish_source = DummyItem(account_id="acc1", title="标题2", description="描述2", image_urls='["c"]', price=8.8)
+    _copy_item_for_republish(republish_target, republish_source, "1001", None)
+    assert republish_target.item_id == "1001"
+    assert republish_target.account_id == "acc1"
+    assert republish_target.title == "标题2"
+    assert republish_target.image_urls == '["c"]'
+    assert republish_target.status == "online"
+    assert republish_target.publish_status == "published"
+    assert republish_target.publish_error is None
+    assert republish_target.url == "https://www.goofish.com/item/1001"
+
+    draft_result = _normalize_publish_result("draft-acc1-1", {"success": True, "message": "", "item_id": None})
+    assert draft_result["success"] is False
+    assert "商品ID" in draft_result["message"]
+
+    online_result = _normalize_publish_result("1001", {"success": True, "message": "", "item_id": None})
+    assert online_result["success"] is False
+
+    assert _extract_item_id_from_url("https://www.goofish.com/item/123456") == "123456"
+    assert _extract_item_id_from_url("https://www.goofish.com/item?id=2233") == "2233"
+    assert _extract_item_id_from_url("https://www.goofish.com/publish?item_id=9988") == "9988"
+
+    parsed_result = _normalize_publish_result(
+        "draft-acc1-1",
+        {"success": True, "message": "", "item_id": None, "item_url": "https://www.goofish.com/item/123456"},
+    )
+    assert parsed_result["success"] is True
+    assert parsed_result["item_id"] == "123456"

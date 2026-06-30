@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..deps import get_current_user
+from ..models.account import Account
 from ..models.delivery_config import DeliveryConfig
 from ..models.delivery_log import DeliveryLog
 from ..models.item import Item
@@ -53,14 +54,33 @@ class DeliveryLogResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+async def _get_owned_account(db: AsyncSession, account_id: str, user: User) -> Optional[Account]:
+    stmt = select(Account).where(Account.account_id == account_id, Account.owner_id == user.id)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _get_owned_item(db: AsyncSession, account_id: str, item_id: str, user: User) -> Optional[Item]:
+    stmt = (
+        select(Item)
+        .join(Account, Item.account_id == Account.account_id)
+        .where(Item.account_id == account_id, Item.item_id == item_id, Account.owner_id == user.id)
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
 @router.get("/configs/{account_id}")
 async def list_configs(account_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if not await _get_owned_account(db, account_id, user):
+        raise HTTPException(status_code=404, detail="账号不存在或无权限")
     result = await db.execute(select(DeliveryConfig).where(DeliveryConfig.account_id == account_id).order_by(DeliveryConfig.id.desc()))
     configs = result.scalars().all()
     return {"success": True, "data": [DeliveryConfigResponse.model_validate(c) for c in configs]}
 
 @router.get("/configs/{account_id}/{item_id}")
 async def get_config(account_id: str, item_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if not await _get_owned_item(db, account_id, item_id, user):
+        raise HTTPException(status_code=404, detail="商品不存在或无权限")
     result = await db.execute(select(DeliveryConfig).where(DeliveryConfig.account_id == account_id, DeliveryConfig.item_id == item_id))
     config = result.scalar_one_or_none()
     if not config:
@@ -77,9 +97,8 @@ async def upsert_config(account_id: str, data: DeliveryConfigRequest, db: AsyncS
                 raise HTTPException(status_code=400, detail="启用 API 发货时必须填写接口地址")
         elif not data.delivery_content.strip():
             raise HTTPException(status_code=400, detail="启用自动发货时必须填写发货内容")
-    item_result = await db.execute(select(Item).where(Item.account_id == account_id, Item.item_id == data.item_id))
-    if not item_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="商品不存在，请先同步商品")
+    if not await _get_owned_item(db, account_id, data.item_id, user):
+        raise HTTPException(status_code=404, detail="商品不存在或无权限")
     result = await db.execute(select(DeliveryConfig).where(DeliveryConfig.account_id == account_id, DeliveryConfig.item_id == data.item_id))
     config = result.scalar_one_or_none()
     if not config:
@@ -96,6 +115,8 @@ async def upsert_config(account_id: str, data: DeliveryConfigRequest, db: AsyncS
 
 @router.delete("/configs/{account_id}/{item_id}")
 async def delete_config(account_id: str, item_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if not await _get_owned_item(db, account_id, item_id, user):
+        raise HTTPException(status_code=404, detail="商品不存在或无权限")
     result = await db.execute(select(DeliveryConfig).where(DeliveryConfig.account_id == account_id, DeliveryConfig.item_id == item_id))
     config = result.scalar_one_or_none()
     if config:
@@ -112,8 +133,9 @@ async def list_logs(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = select(DeliveryLog)
-    count_query = select(func.count(DeliveryLog.id))
+    owned_accounts = select(Account.account_id).where(Account.owner_id == user.id)
+    query = select(DeliveryLog).where(DeliveryLog.account_id.in_(owned_accounts))
+    count_query = select(func.count(DeliveryLog.id)).where(DeliveryLog.account_id.in_(owned_accounts))
     if account_id:
         query = query.where(DeliveryLog.account_id == account_id)
         count_query = count_query.where(DeliveryLog.account_id == account_id)
@@ -130,7 +152,11 @@ async def list_logs(
 async def deliver_order_endpoint(order_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     from ..models.order import Order
     from ..services.delivery import DeliveryExecutor
-    result = await db.execute(select(Order).where(Order.order_id == order_id))
+    result = await db.execute(
+        select(Order)
+        .join(Account, Order.account_id == Account.account_id)
+        .where(Order.order_id == order_id, Account.owner_id == user.id)
+    )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="订单不存在")

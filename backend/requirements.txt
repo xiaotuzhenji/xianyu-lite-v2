@@ -16,3 +16,4 @@ loguru==0.7.3
 playwright==1.49.1
 python-dotenv==1.0.1
 qrcode[pil]==7.4.2
+aiosqlite==0.20.0

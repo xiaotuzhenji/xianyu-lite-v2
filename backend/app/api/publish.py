@@ -1,4 +1,4 @@
-"""
+﻿"""
 商品发布接口
 """
 import asyncio
@@ -13,10 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import async_session_maker, get_db
 from ..deps import get_current_user
+from ..models.account import Account
 from ..models.item import Item
 from ..models.publish_log import PublishLog
 from ..models.user import User
-from ..services.publisher import publish_item
+from ..services.publisher import offline_item, publish_item
 
 _publish_tasks: set = set()
 STALE_PUBLISH_TIMEOUT = timedelta(minutes=10)
@@ -29,6 +30,19 @@ class PublishRequest(BaseModel):
     item_id: str
 
 
+class OfflineRequest(BaseModel):
+    item_id: str
+
+
+async def _get_owned_item(db: AsyncSession, item_id: str, user: User):
+    stmt = (
+        select(Item)
+        .join(Account, Item.account_id == Account.account_id)
+        .where(Item.item_id == item_id, Account.owner_id == user.id)
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
 @router.post("/item")
 async def publish_single_item(
     data: PublishRequest,
@@ -39,9 +53,7 @@ async def publish_single_item(
     if not item_id:
         raise HTTPException(status_code=400, detail="item_id 不能为空")
 
-    stmt = select(Item).where(Item.item_id == item_id)
-    item_result = await db.execute(stmt)
-    item = item_result.scalar_one_or_none()
+    item = await _get_owned_item(db, item_id, user)
     if not item:
         raise HTTPException(status_code=404, detail="商品不存在")
 
@@ -79,7 +91,7 @@ async def publish_single_item(
     _publish_tasks.add(task)
     task.add_done_callback(_publish_tasks.discard)
 
-    logger.info(f"发布任务已提交: item={item_id}, user={owner_id}")
+    logger.info(f"发布任务已提交 item={item_id}, user={owner_id}")
     return JSONResponse(
         status_code=202,
         content={
@@ -88,6 +100,35 @@ async def publish_single_item(
             "item_id": item_id,
         },
     )
+
+
+@router.post("/item/offline")
+async def offline_single_item(
+    data: OfflineRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    item_id = data.item_id.strip()
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id 不能为空")
+
+    item = await _get_owned_item(db, item_id, user)
+    if not item:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    if item.item_id.startswith("draft-"):
+        raise HTTPException(status_code=400, detail="草稿商品不能下架")
+    if item.status == "offline":
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": "商品已下架", "item_id": item_id},
+        )
+    if item.publish_status == "publishing":
+        raise HTTPException(status_code=400, detail="商品正在发布中，暂不能下架")
+
+    result = await offline_item(db, item_id, user.id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "下架失败"))
+    return JSONResponse(status_code=200, content=result)
 
 
 async def _background_publish(item_id: str, owner_id: int):

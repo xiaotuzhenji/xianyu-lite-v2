@@ -1,13 +1,26 @@
 // @ts-nocheck
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+const parseResponse = async (res: Response) => {
+  const text = await res.text();
+  if (!text) {
+    return { success: res.ok };
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    const message = text.startsWith('<') ? '服务返回了非 JSON 内容，请检查后端服务或反向代理' : text.slice(0, 200);
+    return { success: false, error: message, detail: message, status: res.status };
+  }
+};
+
 export const login = async (username: string, password: string) => {
   const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getAccounts = async (page = 1, pageSize = 20) => {
@@ -15,7 +28,7 @@ export const getAccounts = async (page = 1, pageSize = 20) => {
   const res = await fetch(`${API_BASE}/api/v1/accounts?page=${page}&page_size=${pageSize}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const updateAccount = async (accountId: string, data: any) => {
@@ -25,7 +38,7 @@ export const updateAccount = async (accountId: string, data: any) => {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const deleteAccount = async (accountId: string) => {
@@ -34,7 +47,7 @@ export const deleteAccount = async (accountId: string) => {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getItems = async (accountId?: string) => {
@@ -43,7 +56,7 @@ export const getItems = async (accountId?: string) => {
   const res = await fetch(`${API_BASE}/api/v1/items${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const createItem = async (data: any) => {
@@ -53,7 +66,7 @@ export const createItem = async (data: any) => {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const updateItem = async (itemId: string, data: any) => {
@@ -63,7 +76,7 @@ export const updateItem = async (itemId: string, data: any) => {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const deleteItem = async (itemId: string) => {
@@ -72,7 +85,7 @@ export const deleteItem = async (itemId: string) => {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const uploadItemImage = async (file: File) => {
@@ -84,7 +97,7 @@ export const uploadItemImage = async (file: File) => {
     headers: { Authorization: `Bearer ${token}` },
     body: form,
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getKeywords = async (accountId?: string) => {
@@ -93,7 +106,7 @@ export const getKeywords = async (accountId?: string) => {
   const res = await fetch(`${API_BASE}/api/v1/keywords${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const createKeyword = async (data: any) => {
@@ -103,7 +116,7 @@ export const createKeyword = async (data: any) => {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const deleteKeyword = async (id: number) => {
@@ -112,7 +125,7 @@ export const deleteKeyword = async (id: number) => {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getConfirmReceiptConfig = async (accountId: string, itemId?: string) => {
@@ -121,7 +134,7 @@ export const getConfirmReceiptConfig = async (accountId: string, itemId?: string
   const res = await fetch(`${API_BASE}/api/v1/confirm-receipt/${accountId}${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const updateConfirmReceiptConfig = async (accountId: string, data: any) => {
@@ -131,7 +144,7 @@ export const updateConfirmReceiptConfig = async (accountId: string, data: any) =
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getOrders = async (accountId?: string, page = 1) => {
@@ -140,7 +153,7 @@ export const getOrders = async (accountId?: string, page = 1) => {
   const res = await fetch(`${API_BASE}/api/v1/orders${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getOverview = async () => {
@@ -148,7 +161,7 @@ export const getOverview = async () => {
   const res = await fetch(`${API_BASE}/api/v1/statistics/overview`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getDailyStats = async (days = 7) => {
@@ -156,7 +169,7 @@ export const getDailyStats = async (days = 7) => {
   const res = await fetch(`${API_BASE}/api/v1/statistics/daily?days=${days}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const createAccount = async (data: any) => {
@@ -166,35 +179,35 @@ export const createAccount = async (data: any) => {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 
 
 export const generateQR = async () => {
   const token = localStorage.getItem("token");
-  const res = await fetch("/api/v1/qr-login/generate", {
+  const res = await fetch(`${API_BASE}/api/v1/qr-login/generate`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getQRStatus = async (sessionId: string) => {
   const token = localStorage.getItem("token");
-  const res = await fetch(`/api/v1/qr-login/status/${sessionId}`, {
+  const res = await fetch(`${API_BASE}/api/v1/qr-login/status/${sessionId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const startQRPoll = async (sessionId: string) => {
   const token = localStorage.getItem("token");
-  const res = await fetch(`/api/v1/qr-login/poll/${sessionId}`, {
+  const res = await fetch(`${API_BASE}/api/v1/qr-login/poll/${sessionId}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 
@@ -205,7 +218,7 @@ export const syncItems = async (accountId?: string) => {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const syncOrders = async (accountId?: string, queryCode = "NOT_SHIP") => {
@@ -216,7 +229,7 @@ export const syncOrders = async (accountId?: string, queryCode = "NOT_SHIP") => 
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getDeliveryConfig = async (accountId: string, itemId: string) => {
@@ -224,7 +237,7 @@ export const getDeliveryConfig = async (accountId: string, itemId: string) => {
   const res = await fetch(`${API_BASE}/api/v1/delivery/configs/${accountId}/${itemId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const saveDeliveryConfig = async (accountId: string, data: any) => {
@@ -234,7 +247,7 @@ export const saveDeliveryConfig = async (accountId: string, data: any) => {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getDeliveryLogs = async (accountId?: string, itemId?: string, page = 1) => {
@@ -245,7 +258,7 @@ export const getDeliveryLogs = async (accountId?: string, itemId?: string, page 
   const res = await fetch(`${API_BASE}/api/v1/delivery/logs?${params.toString()}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const deliverOrder = async (orderId: string) => {
@@ -254,7 +267,7 @@ export const deliverOrder = async (orderId: string) => {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const getProductionDiagnostics = async () => {
@@ -262,7 +275,7 @@ export const getProductionDiagnostics = async () => {
   const res = await fetch(`${API_BASE}/api/v1/diagnostics/production`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json();
+  return parseResponse(res);
 };
 
 export const publishItem = async (itemId: string) => {
@@ -272,5 +285,15 @@ export const publishItem = async (itemId: string) => {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ item_id: itemId }),
   });
-  return res.json();
+  return parseResponse(res);
+};
+
+export const offlineItem = async (itemId: string) => {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`${API_BASE}/api/v1/publish/item/offline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ item_id: itemId }),
+  });
+  return parseResponse(res);
 };

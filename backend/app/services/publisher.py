@@ -1,4 +1,4 @@
-﻿"""
+"""
 闲鱼商品发布服务 - 使用 Playwright 浏览器自动化
 
 通过 seller.goofish.com 卖家发布页面自动上架商品
@@ -28,6 +28,7 @@ from ..utils.crypto import generate_sign
 _playwright = None
 _playwright_browser = None
 _playwright_lock = asyncio.Lock()
+MAX_PUBLISH_IMAGES = 8
 
 
 def _parse_image_urls(value: Optional[str]) -> list[str]:
@@ -59,6 +60,43 @@ def _merge_item_for_publish(target: Item, source: Item) -> None:
         target.url = source.url
     target.publish_status = "published"
     target.publish_error = None
+
+
+def _copy_item_for_republish(target: Item, source: Item, result_item_id: str, result_url: Optional[str]) -> None:
+    target.item_id = result_item_id
+    target.account_id = source.account_id
+    target.title = source.title
+    target.description = source.description
+    target.image_urls = source.image_urls
+    target.price = source.price
+    target.status = "online"
+    target.publish_status = "published"
+    target.publish_error = None
+    target.url = result_url or f"https://www.goofish.com/item/{result_item_id}"
+
+
+def _extract_item_id_from_url(url: str) -> Optional[str]:
+    if not url:
+        return None
+    match = (
+        re.search(r"[?&](?:id|item_id)=(\d+)", url)
+        or re.search(r"/item/(\d+)", url)
+    )
+    return match.group(1) if match else None
+
+
+def _normalize_publish_result(source_item_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    if not str(result.get("item_id") or "").strip():
+        parsed_item_id = _extract_item_id_from_url(str(result.get("item_url") or ""))
+        if parsed_item_id:
+            result["item_id"] = parsed_item_id
+    if (
+        result.get("success")
+        and not str(result.get("item_id") or "").strip()
+    ):
+        result["success"] = False
+        result["message"] = result.get("message") or "发布结果未返回商品ID，请同步商品确认后再重试"
+    return result
 
 
 def _guess_image_suffix(url: str, content_type: str) -> str:
@@ -110,7 +148,7 @@ async def _offline_item(account_id: str, cookies_str: str, item_id: str) -> bool
         return False
     cookies = trans_cookies(cookies_str)
     timestamp = str(int(time.time() * 1000))
-    data_val = json.dumps({"itemIds": item_id}, separators=(",", ":"))
+    data_val = json.dumps({"itemIds": [item_id]}, separators=(",", ":"))
     token = cookies.get("_m_h5_tk", "").split("_")[0] if cookies.get("_m_h5_tk") else ""
     sign = generate_sign(timestamp, token, data_val)
     params = {
@@ -155,6 +193,35 @@ async def _offline_item(account_id: str, cookies_str: str, item_id: str) -> bool
             inner = ((res_json.get("data") or {}).get("data") or {})
             results = inner.get("itemProcessResultList") or []
             return any(str(item.get("itemId") or "") == item_id and bool(item.get("success")) for item in results) or bool(inner.get("sucCount"))
+
+
+async def offline_item(session: AsyncSession, item_id: str, user_id: int) -> Dict[str, Any]:
+    stmt = select(Item).where(Item.item_id == item_id)
+    item_result = await session.execute(stmt)
+    item = item_result.scalar_one_or_none()
+    if not item:
+        return {"success": False, "message": "商品不存在"}
+
+    account_stmt = (
+        select(Account)
+        .where(Account.account_id == item.account_id, Account.owner_id == user_id)
+        .order_by(desc(Account.id))
+        .limit(1)
+    )
+    account_result = await session.execute(account_stmt)
+    account = account_result.scalars().first()
+    if not account or not account.cookie:
+        return {"success": False, "message": "账号不存在或Cookie为空"}
+
+    offline_ok = await _offline_item(item.account_id, account.cookie, item.item_id)
+    if not offline_ok:
+        return {"success": False, "message": "下架失败"}
+
+    item.status = "offline"
+    item.publish_status = "draft" if item.publish_status == "published" else item.publish_status
+    item.publish_error = None
+    await session.commit()
+    return {"success": True, "message": "下架成功", "item_id": item_id}
 
 async def _get_browser():
     global _playwright, _playwright_browser
@@ -357,7 +424,7 @@ class XianyuPublisher:
         uploaded = 0
         tmp_files: list[Path] = []
         try:
-            for index, url in enumerate(urls[:10]):
+            for index, url in enumerate(urls[:MAX_PUBLISH_IMAGES]):
                 try:
                     if url.startswith("http://") or url.startswith("https://"):
                         tmp = await _download_remote_publish_image(url)
@@ -389,7 +456,7 @@ class XianyuPublisher:
             await upload_input.set_input_files([str(path) for path in tmp_files])
             await asyncio.sleep(max(3, min(len(tmp_files) * 2, 12)))
             uploaded = len(tmp_files)
-            logger.info(f"✓ 批量上传图片 {uploaded}/10")
+            logger.info(f"✓ 批量上传图片 {uploaded}/{MAX_PUBLISH_IMAGES}")
             return uploaded
         finally:
             for tmp in tmp_files:
@@ -435,9 +502,7 @@ class XianyuPublisher:
         if "item_id=" in current_url or "/item/" in current_url or "item?id=" in current_url:
             result["success"] = True
             result["item_url"] = current_url
-            item_id_match = re.search(r"[?&]id=(\d+)", current_url) or re.search(r"item_id=(\d+)", current_url)
-            if item_id_match:
-                result["item_id"] = item_id_match.group(1)
+            result["item_id"] = _extract_item_id_from_url(current_url)
             if not result.get("message"):
                 result["message"] = "发布成功"
         return result
@@ -539,6 +604,7 @@ async def publish_item(
     try:
         async with XianyuPublisher(cookies_str) as publisher:
             result = await publisher.publish(item_data)
+        result = _normalize_publish_result(item.item_id, result)
 
         log.status = "published" if result["success"] else "failed"
         log.error_message = result.get("message")
@@ -547,30 +613,64 @@ async def publish_item(
 
         if result["success"]:
             previous_item_id = item.item_id
+            is_draft_source = previous_item_id.startswith("draft-")
             result_item_id = str(result.get("item_id") or "").strip()
             if result_item_id and result_item_id != item.item_id:
-                existing_stmt = select(Item).where(Item.item_id == result_item_id)
-                existing_result = await session.execute(existing_stmt)
-                existing_item = existing_result.scalar_one_or_none()
-                if existing_item and existing_item.id != item.id:
-                    _merge_item_for_publish(existing_item, item)
-                    await session.delete(item)
-                    item = existing_item
-                else:
-                    item.item_id = result_item_id
-            item.publish_status = "published"
-            item.publish_error = None
-            if result.get("item_url"):
-                item.url = result["item_url"]
-            if previous_item_id and result_item_id and previous_item_id != result_item_id:
-                try:
-                    offline_ok = await _offline_item(item.account_id, cookies_str, previous_item_id)
-                    if offline_ok:
-                        logger.info(f"[下架] 旧商品已下架: {previous_item_id}")
+                result_url = result.get("item_url")
+                if is_draft_source:
+                    existing_stmt = select(Item).where(Item.item_id == result_item_id)
+                    existing_result = await session.execute(existing_stmt)
+                    existing_item = existing_result.scalar_one_or_none()
+                    if existing_item and existing_item.id != item.id:
+                        _copy_item_for_republish(existing_item, item, result_item_id, result_url)
+                        await session.delete(item)
+                        item = existing_item
                     else:
-                        logger.warning(f"[下架] 旧商品下架失败: {previous_item_id}")
-                except Exception as exc:
-                    logger.warning(f"[下架] 旧商品下架异常: {previous_item_id}, error={exc}")
+                        item.item_id = result_item_id
+                        item.status = "online"
+                        item.publish_status = "published"
+                        item.publish_error = None
+                        if result_url:
+                            item.url = result_url
+                else:
+                    existing_stmt = select(Item).where(Item.item_id == result_item_id)
+                    existing_result = await session.execute(existing_stmt)
+                    existing_item = existing_result.scalar_one_or_none()
+                    if existing_item:
+                        _copy_item_for_republish(existing_item, item, result_item_id, result_url)
+                    else:
+                        existing_item = Item(item_id=result_item_id, account_id=item.account_id)
+                        _copy_item_for_republish(existing_item, item, result_item_id, result_url)
+                        session.add(existing_item)
+
+                    try:
+                        offline_ok = await _offline_item(item.account_id, cookies_str, previous_item_id)
+                        if offline_ok:
+                            item.status = "offline"
+                            item.publish_status = "draft"
+                            item.publish_error = None
+                            existing_item.publish_error = None
+                            logger.info(f"[下架] 旧商品已下架: {previous_item_id}")
+                        else:
+                            item.status = "online"
+                            item.publish_status = "published"
+                            item.publish_error = f"新商品已发布，但旧商品下架失败: {previous_item_id}"
+                            existing_item.publish_error = None
+                            logger.warning(f"[下架] 旧商品下架失败: {previous_item_id}")
+                    except Exception as exc:
+                        item.status = "online"
+                        item.publish_status = "published"
+                        item.publish_error = f"新商品已发布，但旧商品下架异常: {previous_item_id}"
+                        existing_item.publish_error = None
+                        logger.warning(f"[下架] 旧商品下架异常: {previous_item_id}, error={exc}")
+
+                    item = existing_item
+            else:
+                item.status = "online"
+                item.publish_status = "published"
+                item.publish_error = None
+                if result.get("item_url"):
+                    item.url = result["item_url"]
         else:
             item.publish_status = "failed"
             item.publish_error = result.get("message")

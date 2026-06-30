@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM dockerproxy.com/library/python:3.11-slim
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 WORKDIR /app
 COPY requirements.txt .

@@ -1,4 +1,8 @@
-﻿FROM python:3.11-slim
+FROM dockerproxy.com/library/python:3.11-slim
+
+RUN printf 'deb https://mirrors.aliyun.com/debian/ trixie main contrib non-free non-free-firmware\n\
+deb https://mirrors.aliyun.com/debian/ trixie-updates main contrib non-free non-free-firmware\n\
+deb https://mirrors.aliyun.com/debian-security trixie-security main contrib non-free non-free-firmware\n' > /etc/apt/sources.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl gnupg ca-certificates \

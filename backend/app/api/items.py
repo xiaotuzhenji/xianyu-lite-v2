@@ -21,6 +21,7 @@ router = APIRouter(prefix="/items", tags=["items"])
 
 UPLOAD_DIR = Path("/app/uploads/items")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MAX_ITEM_IMAGES = 8
 
 
 class ItemResponse(BaseModel):
@@ -48,7 +49,6 @@ class ItemCreateRequest(BaseModel):
     url: str = ""
     description: Optional[str] = ""
     image_urls: str = "[]"
-    status: str = "draft"
 
 
 class ItemUpdateRequest(BaseModel):
@@ -57,9 +57,6 @@ class ItemUpdateRequest(BaseModel):
     url: Optional[str] = None
     description: Optional[str] = None
     image_urls: Optional[str] = None
-    status: Optional[str] = None
-    publish_status: Optional[str] = None
-    publish_error: Optional[str] = None
 
 
 def _parse_image_urls(value: str) -> list[str]:
@@ -78,10 +75,30 @@ def _image_count(value: Optional[str]) -> int:
     return len(_parse_image_urls(value or "[]"))
 
 
-def _cleanup_uploaded_images(image_urls: str) -> None:
+def _validate_image_count(image_urls: str) -> None:
+    if _image_count(image_urls) > MAX_ITEM_IMAGES:
+        raise HTTPException(status_code=400, detail=f"商品图片最多 {MAX_ITEM_IMAGES} 张")
+
+
+def _validate_price(price: float) -> None:
+    if price < 0:
+        raise HTTPException(status_code=400, detail="商品价格不能为负数")
+
+
+def _uploaded_image_path(url: str) -> str:
+    path = urlparse(url).path if "://" in url else url
+    return path if path.startswith("/uploads/items/") else ""
+
+
+def _uploaded_image_paths(image_urls: str) -> set[str]:
+    return {path for path in (_uploaded_image_path(url) for url in _parse_image_urls(image_urls)) if path}
+
+
+def _cleanup_uploaded_images(image_urls: str, reserved_paths: Optional[set[str]] = None) -> None:
+    reserved_paths = reserved_paths or set()
     for url in _parse_image_urls(image_urls):
-        path = urlparse(url).path if "://" in url else url
-        if not path.startswith("/uploads/items/"):
+        path = _uploaded_image_path(url)
+        if not path or path in reserved_paths:
             continue
         filename = path.split("/uploads/items/", 1)[-1].strip("/")
         if not filename:
@@ -92,6 +109,32 @@ def _cleanup_uploaded_images(image_urls: str) -> None:
                 target.unlink()
             except Exception:
                 pass
+
+
+def _can_delete_item(item: Item) -> bool:
+    return item.status != "online" or item.item_id.startswith("draft-")
+
+
+def _new_draft_item_id(account_id: str) -> str:
+    return f"draft-{account_id}-{uuid.uuid4().hex[:12]}"
+
+
+def _is_item_account_conflict(item: Optional[Item], account_id: str) -> bool:
+    return bool(item and item.account_id != account_id)
+
+
+async def _get_owned_account(db: AsyncSession, account_id: str, user: User) -> Optional[Account]:
+    stmt = select(Account).where(Account.account_id == account_id, Account.owner_id == user.id)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _get_owned_item(db: AsyncSession, item_id: str, user: User) -> Optional[Item]:
+    stmt = (
+        select(Item)
+        .join(Account, Item.account_id == Account.account_id)
+        .where(Item.item_id == item_id, Account.owner_id == user.id)
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 async def _find_published_draft_item(
@@ -171,7 +214,7 @@ async def sync_items(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    account_query = select(Account).where(Account.status == "active")
+    account_query = select(Account).where(Account.status == "active", Account.owner_id == user.id)
     if account_id:
         account_query = account_query.where(Account.account_id == account_id)
     accounts = (await db.execute(account_query)).scalars().all()
@@ -179,6 +222,7 @@ async def sync_items(
         raise HTTPException(status_code=404, detail="没有可同步的账号")
 
     synced = 0
+    offline_count = 0
     errors = []
     for account in accounts:
         acc_id = account.account_id
@@ -195,11 +239,20 @@ async def sync_items(
                 await db.commit()
                 continue
 
+            remote_item_ids = set()
             for data in fetched.get("items", []):
-                item_id = data.get("item_id")
+                item_id = str(data.get("item_id") or "").strip()
+                if item_id:
+                    remote_item_ids.add(item_id)
+
+            for data in fetched.get("items", []):
+                item_id = str(data.get("item_id") or "").strip()
                 if not item_id:
                     continue
                 item = (await db.execute(select(Item).where(Item.item_id == item_id))).scalar_one_or_none()
+                if _is_item_account_conflict(item, acc_id):
+                    errors.append({"account_id": acc_id, "error": f"商品ID {item_id} 已属于其他账号，已跳过"})
+                    continue
                 if (
                     item
                     and item.status == "online"
@@ -229,18 +282,35 @@ async def sync_items(
                 if _image_count(fetched_image_urls) >= _image_count(item.image_urls):
                     item.image_urls = fetched_image_urls
                 item.status = data.get("status") or "online"
-                # If item is online on Xianyu, mark as already published
                 if item.status == "online" and (not item.publish_status or item.publish_status in ("draft", "failed")):
                     item.publish_status = "published"
                     item.publish_error = None
                 synced += 1
+
+            if not fetched.get("truncated"):
+                db_items = (
+                    await db.execute(
+                        select(Item).where(
+                            Item.account_id == acc_id,
+                            Item.status == "online",
+                            ~Item.item_id.like("draft-%"),
+                        )
+                    )
+                ).scalars().all()
+                for db_item in db_items:
+                    if db_item.item_id not in remote_item_ids:
+                        db_item.status = "offline"
+                        if db_item.publish_status == "published":
+                            db_item.publish_status = "draft"
+                        db_item.publish_error = None
+                        offline_count += 1
+
             await db.commit()
         except Exception as exc:
             await db.rollback()
             errors.append({"account_id": acc_id, "error": str(exc)})
 
-    return {"success": True, "synced": synced, "accounts": len(accounts), "errors": errors}
-
+    return {"success": True, "synced": synced, "offline": offline_count, "accounts": len(accounts), "errors": errors}
 
 @router.post("")
 async def create_item(
@@ -248,8 +318,11 @@ async def create_item(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if not data.account_id.strip():
+    account_id = data.account_id.strip()
+    if not account_id:
         raise HTTPException(status_code=400, detail="account_id 不能为空")
+    if not await _get_owned_account(db, account_id, user):
+        raise HTTPException(status_code=404, detail="账号不存在或无权限")
     item_id = data.item_id.strip()
     if item_id:
         existing = (await db.execute(select(Item).where(Item.item_id == item_id))).scalar_one_or_none()
@@ -259,14 +332,16 @@ async def create_item(
         existing = None
 
     is_draft = not item_id
-    item = existing or Item(item_id=item_id or f"draft-{data.account_id}-{int(time.time())}", account_id=data.account_id)
-    item.account_id = data.account_id
+    item = existing or Item(item_id=item_id or _new_draft_item_id(account_id), account_id=account_id)
+    item.account_id = account_id
     item.title = data.title.strip()[:30]
+    _validate_price(data.price or 0)
     item.price = data.price or 0
     item.url = data.url.strip()
     item.description = (data.description or "").strip()
+    _validate_image_count(data.image_urls or "[]")
     item.image_urls = (data.image_urls or "[]").strip()
-    item.status = "draft" if is_draft else (data.status.strip() or "draft")
+    item.status = "draft"
     db.add(item)
     await db.commit()
     await db.refresh(item)
@@ -280,26 +355,21 @@ async def update_item(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Item).where(Item.item_id == item_id))
-    item = result.scalar_one_or_none()
+    item = await _get_owned_item(db, item_id, user)
     if not item:
         raise HTTPException(status_code=404, detail="商品不存在")
     if data.title is not None:
         item.title = data.title.strip()[:30]
     if data.price is not None:
+        _validate_price(data.price)
         item.price = data.price
     if data.url is not None:
         item.url = data.url.strip()
     if data.description is not None:
         item.description = data.description.strip()
     if data.image_urls is not None:
+        _validate_image_count(data.image_urls)
         item.image_urls = data.image_urls.strip() or "[]"
-    if data.status is not None:
-        item.status = data.status.strip() or item.status
-    if data.publish_status is not None:
-        item.publish_status = data.publish_status.strip()
-    if data.publish_error is not None:
-        item.publish_error = data.publish_error.strip()
     await db.commit()
     await db.refresh(item)
     return {"success": True, "data": ItemResponse.model_validate(item)}
@@ -311,11 +381,18 @@ async def delete_item(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Item).where(Item.item_id == item_id))
-    item = result.scalar_one_or_none()
+    item = await _get_owned_item(db, item_id, user)
     if not item:
         return {"success": True}
-    _cleanup_uploaded_images(item.image_urls or "[]")
+    if not _can_delete_item(item):
+        raise HTTPException(status_code=400, detail="请先下架后再删除")
+    other_items = (
+        await db.execute(select(Item.image_urls).where(Item.id != item.id))
+    ).scalars().all()
+    reserved_paths: set[str] = set()
+    for other_image_urls in other_items:
+        reserved_paths.update(_uploaded_image_paths(other_image_urls or "[]"))
+    _cleanup_uploaded_images(item.image_urls or "[]", reserved_paths)
     await db.delete(item)
     await db.commit()
     return {"success": True}
@@ -329,8 +406,9 @@ async def list_items(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = select(Item)
-    total_query = select(func.count(Item.id))
+    owned_accounts = select(Account.account_id).where(Account.owner_id == user.id)
+    query = select(Item).where(Item.account_id.in_(owned_accounts))
+    total_query = select(func.count(Item.id)).where(Item.account_id.in_(owned_accounts))
     if account_id:
         query = query.where(Item.account_id == account_id)
         total_query = total_query.where(Item.account_id == account_id)

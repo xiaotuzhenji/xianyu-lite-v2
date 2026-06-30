@@ -227,6 +227,7 @@ class ItemFetcher:
 
     async def fetch_all(self, page_size: int = 20, max_pages: int = 10) -> Dict[str, Any]:
         all_items = []
+        truncated = False
         for page in range(1, max_pages + 1):
             result = await self.fetch_page(page, page_size)
             if result.get("retryable"):
@@ -238,4 +239,6 @@ class ItemFetcher:
             if not result.get("has_more"):
                 break
             await asyncio.sleep(0.5)
-        return {"success": True, "items": all_items, "cookies_str": self.cookies_str}
+        else:
+            truncated = True
+        return {"success": True, "items": all_items, "cookies_str": self.cookies_str, "truncated": truncated}
