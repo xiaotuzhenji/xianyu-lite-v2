@@ -5,6 +5,10 @@ cd "$(dirname "$0")/.."
 
 pull_with_retry() {
   image="$1"
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    echo "$image 已存在，跳过拉取"
+    return 0
+  fi
   attempt=1
   while [ "$attempt" -le 5 ]; do
     if docker pull "$image"; then
