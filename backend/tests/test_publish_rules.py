@@ -65,3 +65,35 @@ def test_publish_rules():
     )
     assert parsed_result["success"] is True
     assert parsed_result["item_id"] == "123456"
+
+    import asyncio
+    asyncio.run(_run_publish_precheck_rules())
+
+
+async def _run_publish_precheck_rules():
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.database import Base
+    from app.models.account import Account
+    from app.models.item import Item
+    from app.services.publisher import publish_item
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with session_maker() as session:
+        account = Account(account_id="acc-empty-cookie", owner_id=1, cookie="")
+        item = Item(item_id="draft-empty-cookie", account_id="acc-empty-cookie", title="draft", publish_status="publishing")
+        session.add_all([account, item])
+        await session.commit()
+
+        result = await publish_item(session, "draft-empty-cookie", 1)
+        assert result["success"] is False
+        refreshed = (await session.execute(select(Item).where(Item.item_id == "draft-empty-cookie"))).scalar_one()
+        assert refreshed.publish_status == "failed"
+        assert refreshed.publish_error == "Account cookie is empty, please login again"
+
+    await engine.dispose()

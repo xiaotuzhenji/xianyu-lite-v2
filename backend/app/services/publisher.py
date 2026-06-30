@@ -596,7 +596,10 @@ async def publish_item(
     account_result = await session.execute(account_stmt)
     account = account_result.scalars().first()
     if not account or not account.cookie:
-        return {"success": False, "message": "账号不存在或Cookie为空"}
+        item.publish_status = "failed"
+        item.publish_error = "Account cookie is empty, please login again"
+        await session.commit()
+        return {"success": False, "message": "Account cookie is empty, please login again"}
     log = PublishLog(
         item_id=item_id,
         account_id=item.account_id,
