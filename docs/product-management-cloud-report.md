@@ -36,3 +36,15 @@
 - 发布草稿到闲鱼，确认真实商品 ID 回写。
 - 编辑已上架商品后重新发布，确认旧商品下架或显示明确失败原因。
 - 为具体商品配置发货内容，确认不同商品互不覆盖。
+
+
+## 2026-06-30 商品管理复验
+
+- 云端代码已同步到 `8824e9d fix: 完善商品新建和筛选规则`。
+- 云端已重新构建前端镜像，并重启 `backend`、`frontend`、`scheduler`、`websocket`。
+- 云端服务状态复验：`backend`、`frontend`、`mysql`、`redis`、`scheduler`、`websocket` 均为运行中。
+- 云端健康检查复验：`GET /health` 返回 `{"success":true,"message":"running"}`，前端首页 HTTP 状态为 `200`。
+- 云端容器内规则测试复验通过：`test_item_flow.py`、`test_item_rules.py`、`test_publish_rules.py`、`test_delivery_rules.py`、`test_api_smoke.py`。
+- 云端 HTTP 临时数据流程复验通过：登录默认管理员、创建临时账号、拒绝手动指定商品 ID、新建草稿、标题 30 字截断、负价格拒绝、超过 8 图拒绝、更新多图、保存并读取商品级发货配置、商品列表按账号读取、删除商品并清理发货配置、删除临时账号。
+- 已修复账号筛选时商品列表只取默认 20 条的问题，前端现在按账号筛选也请求 `page_size=100`。
+- 已修复新建商品接口仍可传手动 `item_id` 的问题，避免草稿被误当成真实已上架商品进入重发流程。
