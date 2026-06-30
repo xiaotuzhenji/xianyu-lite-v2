@@ -219,47 +219,58 @@ class XianyuPublisher:
         raise Exception("未找到描述输入框")
 
     async def _upload_images(self, urls: list[str]) -> int:
-        import aiohttp, tempfile
+        import aiohttp
+
+        upload_input = await self.page.query_selector('input[type="file"]')
+        if not upload_input:
+            logger.warning("未找到文件上传input")
+            return 0
+
         uploaded = 0
-        for url in urls[:10]:
-            try:
-                upload_input = await self.page.query_selector('input[type="file"]')
-                if not upload_input:
-                    logger.warning("未找到文件上传input")
-                    break
-                if url.startswith("http://") or url.startswith("https://"):
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, timeout=30) as resp:
-                            if resp.status != 200:
-                                continue
-                            image_data = await resp.read()
-                elif url.startswith("/uploads/"):
-                    local_path = Path("/app") / url.lstrip("/")
-                    if local_path.exists():
+        tmp_files: list[Path] = []
+        try:
+            for index, url in enumerate(urls[:10]):
+                try:
+                    if url.startswith("http://") or url.startswith("https://"):
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url, timeout=30) as resp:
+                                if resp.status != 200:
+                                    continue
+                                image_data = await resp.read()
+                    elif url.startswith("/uploads/"):
+                        local_path = Path("/app") / url.lstrip("/")
+                        if not local_path.exists():
+                            continue
                         image_data = local_path.read_bytes()
                     else:
                         continue
-                else:
+
+                    suffix = ".jpg"
+                    for ext in [".png", ".webp", ".gif", ".jpeg"]:
+                        if url.lower().endswith(ext):
+                            suffix = ext
+                            break
+                    tmp = Path(f"/tmp/publish_{int(time.time())}_{index}{suffix}")
+                    tmp.write_bytes(image_data)
+                    tmp_files.append(tmp)
+                except Exception as e:
+                    logger.warning(f"准备图片失败: {e}")
                     continue
-                suffix = ".jpg"
-                for ext in [".png", ".webp", ".gif", ".jpeg"]:
-                    if url.lower().endswith(ext):
-                        suffix = ext
-                        break
-                tmp = Path(f"/tmp/publish_{int(time.time())}_{uploaded}{suffix}")
-                tmp.write_bytes(image_data)
-                await upload_input.set_input_files(str(tmp))
-                uploaded += 1
-                await asyncio.sleep(1.5)
-                logger.info(f"✓ 上传图片 {uploaded}/10")
+
+            if not tmp_files:
+                return 0
+
+            await upload_input.set_input_files([str(path) for path in tmp_files])
+            await asyncio.sleep(max(3, min(len(tmp_files) * 2, 12)))
+            uploaded = len(tmp_files)
+            logger.info(f"✓ 批量上传图片 {uploaded}/10")
+            return uploaded
+        finally:
+            for tmp in tmp_files:
                 try:
                     tmp.unlink()
                 except Exception:
                     pass
-            except Exception as e:
-                logger.warning(f"上传图片失败: {e}")
-                continue
-        return uploaded
 
     async def _click_publish(self) -> bool:
         selectors = [

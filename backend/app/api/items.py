@@ -90,6 +90,25 @@ def _cleanup_uploaded_images(image_urls: str) -> None:
                 pass
 
 
+async def _find_published_draft_item(
+    db: AsyncSession,
+    account_id: str,
+    actual_item_id: str,
+) -> Optional[Item]:
+    stmt = (
+        select(Item)
+        .where(
+            Item.account_id == account_id,
+            Item.item_id.like("draft-%"),
+            Item.publish_status == "published",
+            Item.url.like(f"%{actual_item_id}%"),
+        )
+        .order_by(Item.id.desc())
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
 @router.post("/upload-image")
 async def upload_item_image(
     file: UploadFile = File(...),
@@ -158,8 +177,12 @@ async def sync_items(
                     continue
                 item = (await db.execute(select(Item).where(Item.item_id == item_id))).scalar_one_or_none()
                 if not item:
+                    item = await _find_published_draft_item(db, acc_id, item_id)
+                if not item:
                     item = Item(item_id=item_id, account_id=acc_id)
                     db.add(item)
+                else:
+                    item.item_id = item_id
                 item.account_id = acc_id
                 item.title = (data.get("title") or "")[:30]
                 item.price = data.get("price") or 0
