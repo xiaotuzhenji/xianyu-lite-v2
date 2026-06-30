@@ -54,6 +54,11 @@ def test_publish_rules():
 
     online_result = _normalize_publish_result("1001", {"success": True, "message": "", "item_id": None})
     assert online_result["success"] is False
+    assert online_result["message"]
+
+    failed_result = _normalize_publish_result("draft-acc1-1", {"success": False, "message": ""})
+    assert failed_result["success"] is False
+    assert failed_result["message"]
 
     assert _extract_item_id_from_url("https://www.goofish.com/item/123456") == "123456"
     assert _extract_item_id_from_url("https://www.goofish.com/item?id=2233") == "2233"

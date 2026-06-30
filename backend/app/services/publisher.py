@@ -97,6 +97,8 @@ def _normalize_publish_result(source_item_id: str, result: Dict[str, Any]) -> Di
     ):
         result["success"] = False
         result["message"] = result.get("message") or "发布结果未返回商品ID，请同步商品确认后再重试"
+    if not result.get("success") and not str(result.get("message") or "").strip():
+        result["message"] = "平台未返回发布成功，请检查商品内容、图片或账号状态后重试"
     return result
 
 
