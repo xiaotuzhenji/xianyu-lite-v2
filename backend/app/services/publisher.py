@@ -20,6 +20,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.account import Account
+from ..models.delivery_config import DeliveryConfig
 from ..models.item import Item
 from ..models.publish_log import PublishLog
 from ..utils.cookie_utils import is_token_error, merge_set_cookies, trans_cookies
@@ -97,6 +98,30 @@ def _normalize_publish_result(source_item_id: str, result: Dict[str, Any]) -> Di
         result["success"] = False
         result["message"] = result.get("message") or "发布结果未返回商品ID，请同步商品确认后再重试"
     return result
+
+
+async def _move_delivery_config(session: AsyncSession, account_id: str, old_item_id: str, new_item_id: str) -> None:
+    if not old_item_id or not new_item_id or old_item_id == new_item_id:
+        return
+    old_result = await session.execute(
+        select(DeliveryConfig).where(
+            DeliveryConfig.account_id == account_id,
+            DeliveryConfig.item_id == old_item_id,
+        )
+    )
+    old_config = old_result.scalar_one_or_none()
+    if not old_config:
+        return
+    new_result = await session.execute(
+        select(DeliveryConfig).where(
+            DeliveryConfig.account_id == account_id,
+            DeliveryConfig.item_id == new_item_id,
+        )
+    )
+    if new_result.scalar_one_or_none():
+        await session.delete(old_config)
+    else:
+        old_config.item_id = new_item_id
 
 
 def _guess_image_suffix(url: str, content_type: str) -> str:
@@ -617,6 +642,7 @@ async def publish_item(
             result_item_id = str(result.get("item_id") or "").strip()
             if result_item_id and result_item_id != item.item_id:
                 result_url = result.get("item_url")
+                await _move_delivery_config(session, item.account_id, previous_item_id, result_item_id)
                 if is_draft_source:
                     existing_stmt = select(Item).where(Item.item_id == result_item_id)
                     existing_result = await session.execute(existing_stmt)

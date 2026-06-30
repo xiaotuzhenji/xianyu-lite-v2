@@ -7,12 +7,13 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..deps import get_current_user
 from ..models.account import Account
+from ..models.delivery_config import DeliveryConfig
 from ..models.item import Item
 from ..models.user import User
 from ..utils.item_fetcher import ItemFetcher
@@ -176,6 +177,39 @@ def _merge_item_fields(target: Item, source: Item) -> None:
         target.url = source.url
 
 
+async def _move_delivery_config(db: AsyncSession, account_id: str, old_item_id: str, new_item_id: str) -> None:
+    if not old_item_id or not new_item_id or old_item_id == new_item_id:
+        return
+    old_result = await db.execute(
+        select(DeliveryConfig).where(
+            DeliveryConfig.account_id == account_id,
+            DeliveryConfig.item_id == old_item_id,
+        )
+    )
+    old_config = old_result.scalar_one_or_none()
+    if not old_config:
+        return
+    new_result = await db.execute(
+        select(DeliveryConfig).where(
+            DeliveryConfig.account_id == account_id,
+            DeliveryConfig.item_id == new_item_id,
+        )
+    )
+    if new_result.scalar_one_or_none():
+        await db.delete(old_config)
+    else:
+        old_config.item_id = new_item_id
+
+
+async def _delete_delivery_config(db: AsyncSession, account_id: str, item_id: str) -> None:
+    await db.execute(
+        delete(DeliveryConfig).where(
+            DeliveryConfig.account_id == account_id,
+            DeliveryConfig.item_id == item_id,
+        )
+    )
+
+
 @router.post("/upload-image")
 async def upload_item_image(
     file: UploadFile = File(...),
@@ -263,9 +297,11 @@ async def sync_items(
                     item.publish_error = None
                 draft_item = await _find_published_draft_item(db, acc_id, item_id)
                 if item and draft_item and item.id != draft_item.id:
+                    await _move_delivery_config(db, acc_id, draft_item.item_id, item_id)
                     _merge_item_fields(item, draft_item)
                     await db.delete(draft_item)
                 elif not item and draft_item:
+                    await _move_delivery_config(db, acc_id, draft_item.item_id, item_id)
                     item = draft_item
                     item.item_id = item_id
 
@@ -393,6 +429,7 @@ async def delete_item(
     for other_image_urls in other_items:
         reserved_paths.update(_uploaded_image_paths(other_image_urls or "[]"))
     _cleanup_uploaded_images(item.image_urls or "[]", reserved_paths)
+    await _delete_delivery_config(db, item.account_id, item.item_id)
     await db.delete(item)
     await db.commit()
     return {"success": True}

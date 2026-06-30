@@ -4,11 +4,19 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.items import _can_delete_item, _cleanup_uploaded_images, _get_owned_item
+from app.api.items import (
+    _can_delete_item,
+    _cleanup_uploaded_images,
+    _delete_delivery_config,
+    _get_owned_item,
+    _move_delivery_config,
+)
 from app.database import Base
 from app.models.account import Account
+from app.models.delivery_config import DeliveryConfig
 from app.models.item import Item
 from app.models.user import User
 
@@ -39,6 +47,32 @@ async def _run_item_flow():
         assert await _get_owned_item(session, "2001", user_a) is None
         assert await _get_owned_item(session, "2001", user_b) is not None
         _cleanup_uploaded_images('["/uploads/items/a.jpg","/tmp/b.jpg"]')
+        config = DeliveryConfig(account_id="acc1", item_id="draft-acc1-1", delivery_content="delivery content")
+        session.add(config)
+        await session.commit()
+        await _move_delivery_config(session, "acc1", "draft-acc1-1", "1003")
+        await session.commit()
+        moved_config = (
+            await session.execute(
+                select(DeliveryConfig).where(
+                    DeliveryConfig.account_id == "acc1",
+                    DeliveryConfig.item_id == "1003",
+                )
+            )
+        ).scalar_one_or_none()
+        assert moved_config is not None
+        assert moved_config.delivery_content == "delivery content"
+        await _delete_delivery_config(session, "acc1", "1003")
+        await session.commit()
+        removed_config = (
+            await session.execute(
+                select(DeliveryConfig).where(
+                    DeliveryConfig.account_id == "acc1",
+                    DeliveryConfig.item_id == "1003",
+                )
+            )
+        ).scalar_one_or_none()
+        assert removed_config is None
 
     await engine.dispose()
 
