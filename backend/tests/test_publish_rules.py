@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.publisher import MAX_PUBLISH_IMAGES, _build_item_detail_urls, _copy_item_for_republish, _extract_item_id_from_url, _image_count, _merge_item_for_publish, _normalize_publish_result, _parse_image_urls, _summarize_publish_page_text
+from app.services.publisher import MAX_PUBLISH_IMAGES, _build_item_detail_urls, _copy_item_for_republish, _extract_item_id_from_url, _image_count, _is_offline_pending_text, _merge_item_for_publish, _normalize_publish_result, _parse_image_urls, _summarize_publish_page_text
 
 
 class DummyItem:
@@ -65,6 +65,8 @@ def test_publish_rules():
     assert _extract_item_id_from_url("https://www.goofish.com/item?id=2233") == "2233"
     assert _extract_item_id_from_url("https://www.goofish.com/publish?item_id=9988") == "9988"
     assert _extract_item_id_from_url("fleamarket://awesome_detail?item_id=5566") == "5566"
+    assert _is_offline_pending_text("商品下架中，请稍后") is True
+    assert _is_offline_pending_text("商品已下架") is False
     assert _build_item_detail_urls("5566", "fleamarket://awesome_detail?item_id=5566") == [
         "https://www.goofish.com/item?id=5566",
         "https://www.goofish.com/item/5566",

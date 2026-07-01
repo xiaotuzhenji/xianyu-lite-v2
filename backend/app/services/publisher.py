@@ -231,6 +231,13 @@ def _is_offline_success_text(text: str) -> bool:
     )
 
 
+def _is_offline_pending_text(text: str) -> bool:
+    return any(
+        word in (text or "")
+        for word in ["下架中", "正在下架", "处理中", "请稍后"]
+    )
+
+
 async def _offline_item_via_detail_page(cookies_str: str, item_id: str, item_url: str = "") -> bool:
     browser = await _get_browser()
     cookies = trans_cookies(cookies_str)
@@ -271,9 +278,22 @@ async def _offline_item_via_detail_page(cookies_str: str, item_id: str, item_url
                 continue
             await page.wait_for_timeout(1200)
             await _click_page_text(page, ["确认", "确定", "确认下架", "继续下架", "我知道了"], timeout=3000)
-            for _ in range(8):
-                await page.wait_for_timeout(1000)
+            seen_pending = False
+            for _ in range(20):
+                await page.wait_for_timeout(1500)
                 try:
+                    body_text = await page.evaluate("() => document.body.innerText")
+                except Exception:
+                    body_text = ""
+                if _is_offline_success_text(body_text):
+                    return True
+                if _is_offline_pending_text(body_text):
+                    seen_pending = True
+                    continue
+            if seen_pending:
+                try:
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                    await page.wait_for_timeout(5000)
                     body_text = await page.evaluate("() => document.body.innerText")
                 except Exception:
                     body_text = ""
