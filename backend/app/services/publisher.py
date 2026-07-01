@@ -209,7 +209,18 @@ async def _offline_item(account_id: str, cookies_str: str, item_id: str) -> bool
     }
     headers = {
         "accept": "application/json",
+        "accept-language": "en,zh-CN;q=0.9,zh;q=0.8",
+        "cache-control": "no-cache",
         "content-type": "application/x-www-form-urlencoded",
+        "idle_site_biz_code": "COMMONPRO",
+        "idle_user_group_member_id": "",
+        "pragma": "no-cache",
+        "sec-ch-ua": '"Google Chrome";v="146", "Not=A?Brand";v="8", "Chromium";v="146"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
         "referer": "https://seller.goofish.com/?site=COMMONPRO",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
         "cookie": cookies_str.replace("\n", "").replace("\r", ""),
