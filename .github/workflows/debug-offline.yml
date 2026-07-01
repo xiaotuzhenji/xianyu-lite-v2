@@ -15,68 +15,15 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /home/ubuntu/xianyu-lite-v2
+            echo "== compose ps =="
+            docker compose ps
+            echo "== host memory =="
+            free -m || true
+            echo "== backend python smoke =="
             docker compose exec -T backend python - <<'PY'
-            import asyncio
-            import json
-            import time
-
-            import aiohttp
-            from sqlalchemy import select
-
-            from app.database import async_session_maker
-            from app.models.account import Account
-            from app.utils.crypto import generate_sign, trans_cookies
-
-            async def main():
-                async with async_session_maker() as session:
-                    account = (await session.execute(select(Account).where(Account.account_id == "2209036305258"))).scalar_one()
-                    cookies_str = account.cookie
-                cookies = trans_cookies(cookies_str)
-                item_id = "1061124723485"
-                for payload in ({"itemIds": item_id}, {"itemIds": [item_id]}, {"itemIds": ",".join([item_id])}):
-                    timestamp = str(int(time.time() * 1000))
-                    data_val = json.dumps(payload, separators=(",", ":"))
-                    token = cookies.get("_m_h5_tk", "").split("_")[0] if cookies.get("_m_h5_tk") else ""
-                    sign = generate_sign(timestamp, token, data_val)
-                    params = {
-                        "jsv": "2.7.2",
-                        "appKey": "34839810",
-                        "t": timestamp,
-                        "sign": sign,
-                        "v": "1.0",
-                        "type": "originaljson",
-                        "accountSite": "xianyu",
-                        "dataType": "json",
-                        "timeout": "20000",
-                        "needLoginPC": "true",
-                        "showErrorToast": "true",
-                        "api": "mtop.alibaba.idle.seller.pc.item.batch.offline",
-                        "sessionOption": "AutoLoginOnly",
-                        "spm_cnt": "a21107h.42826273.0.0",
-                    }
-                    headers = {
-                        "accept": "application/json",
-                        "content-type": "application/x-www-form-urlencoded",
-                        "referer": "https://seller.goofish.com/?site=COMMONPRO",
-                        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
-                        "cookie": cookies_str.replace("\n", "").replace("\r", ""),
-                    }
-                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
-                        async with http.post(
-                            "https://h5api.m.goofish.com/h5/mtop.alibaba.idle.seller.pc.item.batch.offline/1.0/",
-                            params=params,
-                            data={"data": data_val},
-                            headers=headers,
-                        ) as response:
-                            text = await response.text()
-                            try:
-                                body = json.loads(text)
-                            except Exception:
-                                body = {"raw": text[:1000]}
-                            print("PAYLOAD", payload)
-                            print("STATUS", response.status)
-                            print("BODY", json.dumps(body, ensure_ascii=False)[:2000])
-                            print("SET_COOKIE_COUNT", len(response.headers.getall("set-cookie", [])))
-
-            asyncio.run(main())
+            print("python ok")
             PY
+            echo "== backend recent logs =="
+            docker compose logs --tail=200 backend
+            echo "== account cookie shape =="
+            docker compose exec -T mysql mysql -uxianyu -pxianyu123 -Dxianyu_lite -Nse "select account_id, length(cookie), instr(cookie, '_m_h5_tk='), instr(cookie, 'unb=') from accounts where account_id='2209036305258';"
