@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
@@ -54,6 +55,37 @@ def _build_handler(cookie_id: str) -> MessageHandler:
     handler.set_order_handler(on_order_message)
     handler.set_confirm_receipt_handler(on_confirm_receipt)
     return handler
+
+
+def _fallback_order_id(data: dict) -> str:
+    raw_order_id = str(data.get("order_id") or data.get("orderId") or data.get("trade_id") or data.get("tradeId") or "").strip()
+    if raw_order_id:
+        return raw_order_id[:64]
+    source = str(data.get("message_id") or data.get("messageId") or data.get("id") or "").strip()
+    if not source:
+        source = json.dumps(data.get("raw") or data, ensure_ascii=False, sort_keys=True, default=str)
+    digest = hashlib.sha1(source.encode("utf-8")).hexdigest()
+    return f"ws-{digest}"
+
+
+def _safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0
+
+
+def _build_order_payload(cookie_id: str, data: dict) -> dict:
+    return {
+        "account_id": cookie_id,
+        "order_id": _fallback_order_id(data),
+        "item_id": str(data.get("item_id") or data.get("itemId") or ""),
+        "buyer_id": str(data.get("buyer_id") or data.get("buyerId") or data.get("sender_id") or data.get("from_user_id") or ""),
+        "buyer_name": str(data.get("buyer_name") or data.get("buyerNick") or data.get("nick") or ""),
+        "price": _safe_float(data.get("price") or data.get("amount") or 0),
+        "status": str(data.get("status") or "paid"),
+        "auto_deliver": True,
+    }
 
 
 async def _send_reply(cookie_id: str, data: dict, content: str):
@@ -138,20 +170,9 @@ async def on_chat_message(cookie_id: str, data: dict):
 
 async def on_order_message(cookie_id: str, data: dict):
     logger.info(f"[{cookie_id}] Order message: {json.dumps(data, ensure_ascii=False)[:300]}")
-    order_id = str(data.get("order_id") or data.get("orderId") or data.get("trade_id") or data.get("tradeId") or "")
-    if not order_id:
-        return
-
-    payload = {
-        "account_id": cookie_id,
-        "order_id": order_id,
-        "item_id": str(data.get("item_id") or data.get("itemId") or ""),
-        "buyer_id": str(data.get("buyer_id") or data.get("buyerId") or data.get("sender_id") or data.get("from_user_id") or ""),
-        "buyer_name": str(data.get("buyer_name") or data.get("buyerNick") or data.get("nick") or ""),
-        "price": float(data.get("price") or data.get("amount") or 0),
-        "status": str(data.get("status") or "paid"),
-        "auto_deliver": True,
-    }
+    payload = _build_order_payload(cookie_id, data)
+    if payload["order_id"].startswith("ws-"):
+        logger.info(f"[{cookie_id}] Order message missing platform order_id, use fallback {payload['order_id']}")
     backend_url = os.getenv("BACKEND_URL", "http://backend:8000")
     try:
         async with aiohttp.ClientSession() as session:

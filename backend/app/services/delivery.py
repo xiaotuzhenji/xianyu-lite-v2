@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import aiohttp
@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.delivery_config import DeliveryConfig
 from ..models.delivery_log import DeliveryLog
 from ..models.order import Order
+
+
+FALLBACK_ORDER_DEDUPE_WINDOW = timedelta(minutes=30)
 
 
 class DeliveryExecutor:
@@ -50,6 +53,26 @@ class DeliveryExecutor:
                     return True, text, ""
                 return False, text, f"api status {resp.status}: {text[:200]}"
 
+    async def _recent_fallback_success(self, order: Order) -> Optional[DeliveryLog]:
+        order_id = str(order.order_id or "")
+        if not order_id.startswith("ws-"):
+            return None
+        if not order.account_id or not order.item_id or not order.buyer_id:
+            return None
+
+        cutoff = datetime.utcnow() - FALLBACK_ORDER_DEDUPE_WINDOW
+        return (await self.db.execute(
+            select(DeliveryLog).where(
+                DeliveryLog.order_id != order.order_id,
+                DeliveryLog.account_id == order.account_id,
+                DeliveryLog.item_id == order.item_id,
+                DeliveryLog.buyer_id == order.buyer_id,
+                DeliveryLog.status == "success",
+                DeliveryLog.sent_at.is_not(None),
+                DeliveryLog.sent_at >= cutoff,
+            ).order_by(DeliveryLog.sent_at.desc()).limit(1)
+        )).scalar_one_or_none()
+
     async def deliver_order(self, order: Order) -> DeliveryLog:
         existing = (await self.db.execute(select(DeliveryLog).where(DeliveryLog.order_id == order.order_id))).scalar_one_or_none()
         if not existing:
@@ -63,6 +86,19 @@ class DeliveryExecutor:
             self.db.add(existing)
             await self.db.flush()
 
+        if not order.item_id:
+            existing.attempts = (existing.attempts or 0) + 1
+            existing.status = "failed"
+            existing.error = "订单缺少 item_id，无法匹配商品发货配置"
+            await self.db.commit()
+            return existing
+        if not order.buyer_id:
+            existing.attempts = (existing.attempts or 0) + 1
+            existing.status = "failed"
+            existing.error = "订单缺少 buyer_id，无法发送发货消息"
+            await self.db.commit()
+            return existing
+
         config = (await self.db.execute(
             select(DeliveryConfig).where(
                 DeliveryConfig.account_id == order.account_id,
@@ -75,14 +111,24 @@ class DeliveryExecutor:
             return existing
 
         existing.attempts = (existing.attempts or 0) + 1
+
+        recent_success = await self._recent_fallback_success(order)
+        if recent_success:
+            logger.info(
+                f"skip duplicate fallback delivery: order={order.order_id}, recent={recent_success.order_id}, "
+                f"account={order.account_id}, item={order.item_id}, buyer={order.buyer_id}"
+            )
+            existing.status = "success"
+            existing.content = recent_success.content
+            existing.error = ""
+            existing.sent_at = recent_success.sent_at or datetime.utcnow()
+            order.status = "shipped"
+            await self.db.commit()
+            return existing
+
         if not config:
             existing.status = "skipped"
             existing.error = "未配置该商品的发货内容"
-            await self.db.commit()
-            return existing
-        if not order.buyer_id:
-            existing.status = "failed"
-            existing.error = "订单缺少buyer_id，无法发送消息"
             await self.db.commit()
             return existing
 

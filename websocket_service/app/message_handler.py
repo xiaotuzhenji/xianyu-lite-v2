@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import re
 from typing import Any, Callable, Optional
@@ -55,7 +56,7 @@ class MessageHandler:
 
     async def handle(self, cookie_id: str, data: dict):
         for message in self._iter_messages(data):
-            msg_id = self._message_id(message)
+            msg_id = self._message_key(message)
             if msg_id and msg_id in self._processed_ids:
                 continue
             if msg_id:
@@ -66,6 +67,8 @@ class MessageHandler:
             normalized = self._normalize_message(message)
             if not normalized:
                 continue
+            if msg_id:
+                normalized.setdefault("message_id", msg_id)
             msg_type = normalized.get("type")
             if msg_type == "chat_message" and self.on_chat_message:
                 await self.on_chat_message(cookie_id, normalized)
@@ -117,6 +120,13 @@ class MessageHandler:
             if candidate:
                 return str(candidate)
         return ""
+
+    def _message_key(self, message: dict) -> str:
+        message_id = self._message_id(message)
+        if message_id:
+            return message_id
+        text = json.dumps(message, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
     def _normalize_message(self, message: dict) -> Optional[dict]:
         direct_type = message.get("type")
