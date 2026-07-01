@@ -188,7 +188,7 @@ async def _offline_item(account_id: str, cookies_str: str, item_id: str) -> bool
         return False
     cookies = trans_cookies(cookies_str)
     timestamp = str(int(time.time() * 1000))
-    data_val = json.dumps({"itemIds": [item_id]}, separators=(",", ":"))
+    data_val = json.dumps({"itemIds": item_id}, separators=(",", ":"))
     token = cookies.get("_m_h5_tk", "").split("_")[0] if cookies.get("_m_h5_tk") else ""
     sign = generate_sign(timestamp, token, data_val)
     params = {
