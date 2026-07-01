@@ -1,10 +1,39 @@
 import base64
 import json
 import re
-import time
 from typing import Any, Callable, Optional
 
 from loguru import logger
+
+
+PAID_ORDER_KEYWORDS = (
+    "[我已付款，等待你发货]",
+    "[我已付款，等待您发货]",
+    "[已付款，待发货]",
+    "我已付款，等待你发货",
+    "我已付款，等待您发货",
+    "已付款，待发货",
+    "买家已付款",
+    "等待你发货",
+    "等待您发货",
+    "待发货",
+)
+
+CONFIRM_RECEIPT_KEYWORDS = (
+    "[买家确认收货，交易成功]",
+    "[你已确认收货，交易成功]",
+    "买家已确认收货，交易成功",
+    "确认收货",
+    "交易成功",
+)
+
+ORDER_RELATED_KEYWORDS = (
+    "订单",
+    "付款",
+    "发货",
+    "收货",
+    "交易",
+)
 
 
 class MessageHandler:
@@ -102,9 +131,9 @@ class MessageHandler:
         if self._is_confirm_receipt_content(content):
             parsed["type"] = "confirm_receipt"
             return parsed
-        if self._is_paid_order_content(content):
+        if self._is_paid_order_content(content) or self._looks_like_order_update(parsed):
             parsed["type"] = "order_update"
-            parsed["status"] = "paid"
+            parsed["status"] = parsed.get("status") or "paid"
             return parsed
         parsed["type"] = "chat_message"
         return parsed
@@ -113,9 +142,10 @@ class MessageHandler:
         if isinstance(message.get("1"), dict):
             message_1 = message.get("1") or {}
             message_10 = message_1.get("10") if isinstance(message_1.get("10"), dict) else {}
+            message_1_1 = message_1.get("1") if isinstance(message_1.get("1"), dict) else {}
             chat_id = self._strip_goofish(message_1.get("2", ""))
             content = str(message_10.get("reminderContent") or message.get("content") or "")
-            buyer_id = str(message_10.get("senderUserId") or self._strip_goofish((message_1.get("1") or {}).get("1", "")) or "")
+            buyer_id = str(message_10.get("senderUserId") or self._strip_goofish(message_1_1.get("1", "")) or "")
             buyer_name = str(message_10.get("senderNick") or message_10.get("reminderTitle") or "")
             item_id = self._extract_item_id(message_10) or self._extract_item_id(message_1)
             order_id = self._extract_order_id(message_10) or self._extract_order_id(message_1) or self._extract_order_id(message)
@@ -196,8 +226,20 @@ class MessageHandler:
 
     @staticmethod
     def _is_paid_order_content(content: str) -> bool:
-        return any(keyword in content for keyword in ("已付款", "等待你发货", "待发货", "买家已付款"))
+        return any(keyword in (content or "") for keyword in PAID_ORDER_KEYWORDS)
 
     @staticmethod
     def _is_confirm_receipt_content(content: str) -> bool:
-        return any(keyword in content for keyword in ("确认收货", "交易成功", "已收货"))
+        return any(keyword in (content or "") for keyword in CONFIRM_RECEIPT_KEYWORDS)
+
+    @staticmethod
+    def _looks_like_order_update(message: dict) -> bool:
+        content = str(message.get("content") or "")
+        order_id = str(message.get("order_id") or "")
+        item_id = str(message.get("item_id") or "")
+        buyer_id = str(message.get("buyer_id") or "")
+        if not order_id:
+            return False
+        if any(keyword in content for keyword in ORDER_RELATED_KEYWORDS):
+            return True
+        return bool(item_id and buyer_id)
