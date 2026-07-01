@@ -183,7 +183,91 @@ async def _download_remote_publish_image(url: str) -> Path:
     raise ValueError(f"远程图片下载失败: {url}, error={last_error}")
 
 
-async def _offline_item(account_id: str, cookies_str: str, item_id: str) -> bool:
+async def _click_page_text(page, labels: list[str], timeout: int = 2000) -> bool:
+    selectors = []
+    for label in labels:
+        selectors.extend(
+            [
+                f'button:has-text("{label}")',
+                f'[role="button"]:has-text("{label}")',
+                f'a:has-text("{label}")',
+                f'span:has-text("{label}")',
+                f'text="{label}"',
+            ]
+        )
+    for selector in selectors:
+        try:
+            locator = page.locator(selector).first
+            if await locator.count() == 0:
+                continue
+            await locator.click(timeout=timeout)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _is_offline_success_text(text: str) -> bool:
+    return any(
+        word in (text or "")
+        for word in ["已下架", "下架成功", "商品已下架", "下架完成", "宝贝已下架"]
+    )
+
+
+async def _offline_item_via_detail_page(cookies_str: str, item_id: str, item_url: str = "") -> bool:
+    browser = await _get_browser()
+    cookies = trans_cookies(cookies_str)
+    cookie_list = []
+    for name, value in (cookies or {}).items():
+        for domain in [".goofish.com", ".taobao.com", ".alipay.com"]:
+            cookie_list.append({"name": name, "value": value, "domain": domain, "path": "/"})
+
+    context = await browser.new_context(
+        viewport={"width": 1365, "height": 900},
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/146.0.0.0 Safari/537.36",
+    )
+    try:
+        stealth_file = Path(__file__).parent / "stealth.js"
+        if stealth_file.exists():
+            await context.add_init_script(path=str(stealth_file))
+        await context.add_cookies(cookie_list)
+        page = await context.new_page()
+        target_urls = [url for url in [item_url, f"https://www.goofish.com/item?id={item_id}"] if url]
+        for target_url in target_urls:
+            try:
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            except Exception:
+                continue
+            await page.wait_for_timeout(5000)
+            try:
+                body_text = await page.evaluate("() => document.body.innerText")
+            except Exception:
+                body_text = ""
+            if _is_offline_success_text(body_text):
+                return True
+            clicked = await _click_page_text(page, ["下架", "立即下架", "确认下架"], timeout=3000)
+            if not clicked:
+                await _click_page_text(page, ["更多", "操作", "菜单", "..."], timeout=2000)
+                await page.wait_for_timeout(1000)
+                clicked = await _click_page_text(page, ["下架", "立即下架", "确认下架"], timeout=3000)
+            if not clicked:
+                continue
+            await page.wait_for_timeout(1200)
+            await _click_page_text(page, ["确认", "确定", "确认下架", "继续下架", "我知道了"], timeout=3000)
+            for _ in range(8):
+                await page.wait_for_timeout(1000)
+                try:
+                    body_text = await page.evaluate("() => document.body.innerText")
+                except Exception:
+                    body_text = ""
+                if _is_offline_success_text(body_text):
+                    return True
+        return False
+    finally:
+        await context.close()
+
+
+async def _offline_item(account_id: str, cookies_str: str, item_id: str, item_url: str = "") -> bool:
     if not account_id or not cookies_str or not item_id:
         return False
     cookies = trans_cookies(cookies_str)
@@ -240,7 +324,7 @@ async def _offline_item(account_id: str, cookies_str: str, item_id: str) -> bool
             ret = (res_json.get("ret") or [""])[0]
             if "SUCCESS" not in ret:
                 logger.warning(f"[下架] 接口失败: item={item_id}, ret={ret}")
-                return False
+                return await _offline_item_via_detail_page(cookies_str, item_id, item_url)
             inner = ((res_json.get("data") or {}).get("data") or {})
             results = inner.get("itemProcessResultList") or []
             return any(str(item.get("itemId") or "") == item_id and bool(item.get("success")) for item in results) or bool(inner.get("sucCount"))
@@ -264,7 +348,7 @@ async def offline_item(session: AsyncSession, item_id: str, user_id: int) -> Dic
     if not account or not account.cookie:
         return {"success": False, "message": "账号不存在或Cookie为空"}
 
-    offline_ok = await _offline_item(item.account_id, account.cookie, item.item_id)
+    offline_ok = await _offline_item(item.account_id, account.cookie, item.item_id, item.url or "")
     if not offline_ok:
         return {"success": False, "message": "下架失败"}
 
@@ -701,7 +785,7 @@ async def publish_item(
                         session.add(existing_item)
 
                     try:
-                        offline_ok = await _offline_item(item.account_id, cookies_str, previous_item_id)
+                        offline_ok = await _offline_item(item.account_id, cookies_str, previous_item_id, item.url or "")
                         if offline_ok:
                             item.status = "offline"
                             item.publish_status = "draft"

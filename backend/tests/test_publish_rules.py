@@ -74,6 +74,7 @@ def test_publish_rules():
 
     import asyncio
     asyncio.run(_run_publish_precheck_rules())
+    asyncio.run(_run_offline_fallback_rule())
 
 
 async def _run_publish_precheck_rules():
@@ -103,3 +104,50 @@ async def _run_publish_precheck_rules():
         assert refreshed.publish_error == "Account cookie is empty, please login again"
 
     await engine.dispose()
+
+
+async def _run_offline_fallback_rule():
+    import app.services.publisher as publisher
+
+    calls = []
+
+    async def fake_detail_page(cookies_str: str, item_id: str, item_url: str = "") -> bool:
+        calls.append((cookies_str, item_id, item_url))
+        return True
+
+    class FakeResponse:
+        headers = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def json(self, content_type=None):
+            return {"ret": ["FAIL_BIZ_IDLE_USER_UNAUTHORIZED::无权限访问"], "data": {}}
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    original_session = publisher.aiohttp.ClientSession
+    original_detail = publisher._offline_item_via_detail_page
+    publisher.aiohttp.ClientSession = FakeSession
+    publisher._offline_item_via_detail_page = fake_detail_page
+    try:
+        result = await publisher._offline_item("acc1", "foo=bar", "1001", "https://www.goofish.com/item?id=1001")
+        assert result is True
+        assert calls == [("foo=bar", "1001", "https://www.goofish.com/item?id=1001")]
+    finally:
+        publisher.aiohttp.ClientSession = original_session
+        publisher._offline_item_via_detail_page = original_detail
