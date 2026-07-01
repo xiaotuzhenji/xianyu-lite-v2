@@ -86,6 +86,23 @@ def _extract_item_id_from_url(url: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _build_item_detail_urls(item_id: str, item_url: str = "") -> list[str]:
+    urls: list[str] = []
+
+    def _add(url: str) -> None:
+        normalized = str(url or "").strip()
+        if normalized and normalized not in urls:
+            urls.append(normalized)
+
+    parsed_item_id = _extract_item_id_from_url(item_url or "") or item_id
+    if item_url.startswith("http://") or item_url.startswith("https://"):
+        _add(item_url)
+    if parsed_item_id:
+        _add(f"https://www.goofish.com/item?id={parsed_item_id}")
+        _add(f"https://www.goofish.com/item/{parsed_item_id}")
+    return urls
+
+
 def _normalize_publish_result(source_item_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
     if not str(result.get("item_id") or "").strip():
         parsed_item_id = _extract_item_id_from_url(str(result.get("item_url") or ""))
@@ -232,7 +249,7 @@ async def _offline_item_via_detail_page(cookies_str: str, item_id: str, item_url
             await context.add_init_script(path=str(stealth_file))
         await context.add_cookies(cookie_list)
         page = await context.new_page()
-        target_urls = [url for url in [item_url, f"https://www.goofish.com/item?id={item_id}"] if url]
+        target_urls = _build_item_detail_urls(item_id, item_url)
         for target_url in target_urls:
             try:
                 await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
